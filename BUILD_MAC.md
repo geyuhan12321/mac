@@ -3,7 +3,7 @@
 > **当前进度**：本地 git 仓库已初始化并提交，`.gitignore` 已排除私人词库，Windows 流水线也已就位。
 > 剩下的只有 `git remote add origin … && git push -u origin main` 这一步——它需要你的 GitHub 账号。
 
-Windows 机器打不出能双击的 macOS `.app`——PyInstaller 只能为目标平台编译原生解释器和 Qt 框架。所以用 GitHub 免费的 `macos-14`（Apple Silicon）和 `macos-13`（Intel）两台机器各打一份，打完直接下载。
+Windows 机器打不出能双击的 macOS `.app`——PyInstaller 只能为目标平台编译原生解释器和 Qt 框架。所以用 GitHub 免费的 `macos-14` 机器（原生 Apple Silicon）构建，得到的是**真 arm64 原生包**，不是 Rosetta 转译。
 
 工作流文件：[.github/workflows/build-mac.yml](.github/workflows/build-mac.yml)
 
@@ -55,10 +55,11 @@ git push origin v1.0.0
 
 | 产物 | 适用机器 |
 |---|---|
-| `Apple Silicon (arm64)` → `词典-arm64.zip` / `.dmg` | M 系列 Mac（M1/M2/M3/M4） |
-| `Intel (x86_64)` → `词典-x86_64.zip` / `.dmg` | 老款 Intel Mac |
+| `词典-arm64.zip` / `词典-arm64.dmg` | M 系列 Mac（M1/M2/M3/M4），原生运行 |
 
-`.app` 只有 60–80MB，整体跑一次约 4–6 分钟。
+`.app` 约 60–80MB，整体跑一次约 4–5 分钟。
+
+> 只出 arm64。老 Intel Mac 需要 x86_64 包时，把 `build-mac.yml` 里矩阵那段加回 `macos-13 / x86_64` 即可。
 
 ---
 
@@ -69,6 +70,7 @@ git push origin v1.0.0
 | 装依赖 | Python 3.12 + `PySide6-Essentials` + PyInstaller（带 pip 缓存） |
 | **自检** | 无界面模式跑一遍：加载示例词条、建索引、渲染 HTML，失败就不打包 |
 | PyInstaller | `--windowed` 出 `.app`，排除 WebEngine/3D/Multimedia/tkinter 砍体积 |
+| **架构断言** | `lipo -archs` 检查主程序与内嵌 dylib/so 全是 arm64，混进 x86 二进制就直接失败 |
 | 修 Info.plist | 补 `CFBundleDisplayName`、`NSHighResolutionCapable`、最低系统 11.0 |
 | 签名 | 有证书走真签名 + 公证；没有就 ad-hoc 签名 |
 | **冒烟启动** | 启动 `.app` 等 6 秒，进程还活着才算通过 |
