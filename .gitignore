@@ -1,0 +1,12 @@
+.venv-build/
+build/
+dist/
+__pycache__/
+*.spec
+*.pyc
+
+# 私人词库，不要上传
+data/words.json
+
+# 本地截图
+preview/

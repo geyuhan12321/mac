@@ -1,0 +1,179 @@
+name: build-macos
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      dmg:
+        description: "是否额外生成 .dmg 安装包"
+        type: boolean
+        default: true
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            name: Apple Silicon (arm64)
+            arch: arm64
+          - os: macos-13
+            name: Intel (x86_64)
+            arch: x86_64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller
+
+      - name: 自检（无界面，确认能导入）
+        run: |
+          python - <<'PY'
+          import os
+          os.environ["QT_QPA_PLATFORM"] = "offscreen"
+          from PySide6.QtWidgets import QApplication
+          import dictionary_model, dictionary_render
+          from demo_data import DEMO
+          app = QApplication([])
+          entries = [dictionary_model.normalize_entry(x) for x in DEMO]
+          idx = dictionary_model.Index(entries)
+          html = dictionary_render.entry_html(entries[0], idx, [], [])
+          assert "app://w/" in html or len(html) > 500
+          print("self-check ok:", len(entries), "entries, html", len(html), "chars")
+          PY
+
+      - name: PyInstaller 打包
+        env:
+          APP_NAME: ${{ vars.MAC_APP_NAME || '词典' }}
+        run: |
+          python -m PyInstaller \
+            --noconfirm --windowed --clean \
+            --name "$APP_NAME" \
+            --osx-bundle-identifier local.dict.desktop \
+            --exclude-module PySide6.QtWebEngineCore \
+            --exclude-module PySide6.QtWebEngineWidgets \
+            --exclude-module PySide6.Qt3DCore \
+            --exclude-module PySide6.QtMultimedia \
+            --exclude-module tkinter \
+            app.py
+
+      - name: 修 Info.plist
+        env:
+          APP_NAME: ${{ vars.MAC_APP_NAME || '词典' }}
+        run: |
+          PLIST="dist/$APP_NAME.app/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string $APP_NAME" "$PLIST" || true
+          /usr/libexec/PlistBuddy -c "Add :NSHighResolutionCapable bool true" "$PLIST" || true
+          /usr/libexec/PlistBuddy -c "Add :LSMinimumSystemVersion string 11.0" "$PLIST" || true
+          /usr/libexec/PlistBuddy -c "Print" "$PLIST"
+
+      - name: 签名
+        env:
+          APP_NAME: ${{ vars.MAC_APP_NAME || '词典' }}
+          CERT_B64: ${{ secrets.MAC_CERT_P12_BASE64 }}
+          CERT_PASS: ${{ secrets.MAC_CERT_PASSWORD }}
+          SIGN_ID: ${{ secrets.MAC_SIGN_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_PW: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          APP="dist/$APP_NAME.app"
+          if [[ -n "$CERT_B64" && -n "$SIGN_ID" ]]; then
+            echo "== 使用开发者证书签名 =="
+            KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
+            echo "$CERT_B64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+            security create-keychain -p actions "$KEYCHAIN"
+            security set-keychain-settings -lut 21600 "$KEYCHAIN"
+            security unlock-keychain -p actions "$KEYCHAIN"
+            security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$CERT_PASS" \
+              -T /usr/bin/codesign
+            security set-key-partition-list -S apple-tool:,apple: -s -k actions "$KEYCHAIN" >/dev/null
+            security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+            codesign --force --deep --timestamp --options runtime --sign "$SIGN_ID" "$APP"
+
+            if [[ -n "$APPLE_ID" && -n "$APPLE_TEAM" && -n "$APPLE_PW" ]]; then
+              echo "== 公证 =="
+              ditto -c -k --keepParent "$APP" "$RUNNER_TEMP/notarize.zip"
+              xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" \
+                --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM" --password "$APPLE_PW" \
+                --wait
+              xcrun stapler staple "$APP"
+            fi
+          else
+            echo "== 未配置证书，使用 ad-hoc 签名（本机可用，分发会被 Gatekeeper 拦） =="
+            codesign --force --deep --sign - "$APP" || true
+          fi
+          codesign --verify --deep --strict --verbose=2 "$APP" || true
+
+      - name: 冒烟启动（确认不崩）
+        env:
+          APP_NAME: ${{ vars.MAC_APP_NAME || '词典' }}
+        run: |
+          "dist/$APP_NAME.app/Contents/MacOS/$APP_NAME" &
+          PID=$!
+          sleep 6
+          if kill -0 $PID 2>/dev/null; then
+            echo "进程存活 —— 启动正常"
+            kill $PID || true
+          else
+            echo "进程已退出，可能启动失败"
+            exit 1
+          fi
+
+      - name: 打包 zip
+        env:
+          APP_NAME: ${{ vars.MAC_APP_NAME || '词典' }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          cd dist
+          ditto -c -k --sequesterRsrc --keepParent "$APP_NAME.app" "$APP_NAME-$ARCH.zip"
+          ls -lh
+
+      - name: 生成 DMG
+        if: github.event_name == 'workflow_dispatch' && inputs.dmg || startsWith(github.ref, 'refs/tags/')
+        env:
+          APP_NAME: ${{ vars.MAC_APP_NAME || '词典' }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          cd dist
+          hdiutil create -volname "$APP_NAME" -srcfolder "$APP_NAME.app" \
+            -ov -format UDZO "$APP_NAME-$ARCH.dmg"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: |
+            dist/*.zip
+            dist/*.dmg
+          if-no-files-found: warn
+
+  release:
+    name: 发布到 Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/**/*.zip
+            artifacts/**/*.dmg
+          generate_release_notes: true

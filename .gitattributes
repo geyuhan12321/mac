@@ -1,0 +1,6 @@
+# 行尾：Windows 侧批处理用 CRLF，脚本用 LF
+*.bat text eol=crlf
+*.sh text eol=lf
+*.yml text eol=lf
+*.py text eol=lf
+*.md text eol=lf
