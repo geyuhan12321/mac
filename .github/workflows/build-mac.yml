@@ -21,9 +21,6 @@ jobs:
           - os: macos-14
             name: Apple Silicon (arm64)
             arch: arm64
-          - os: macos-13
-            name: Intel (x86_64)
-            arch: x86_64
 
     steps:
       - uses: actions/checkout@v4
@@ -69,6 +66,29 @@ jobs:
             --exclude-module PySide6.QtMultimedia \
             --exclude-module tkinter \
             app.py
+
+      - name: 校验确实打出了 arm64 原生包
+        env:
+          APP_NAME: ${{ vars.MAC_APP_NAME || '词典' }}
+        run: |
+          set -euo pipefail
+          BIN="dist/$APP_NAME.app/Contents/MacOS/$APP_NAME"
+          echo "主机架构：$(uname -m)"
+          echo "== 主程序架构 =="
+          lipo -archs "$BIN"
+          lipo -archs "$BIN" | grep -qw arm64 || { echo "错误：不是 arm64 原生包"; exit 1; }
+
+          echo "== 内嵌 Python / Qt 二进制抽样 =="
+          FAIL=0
+          while IFS= read -r f; do
+            ARCHS="$(lipo -archs "$f" 2>/dev/null || echo unknown)"
+            case "$ARCHS" in
+              *arm64*) ;;
+              *) echo "非 arm64: $ARCHS  $f"; FAIL=1 ;;
+            esac
+          done < <(find "dist/$APP_NAME.app" -type f \( -name "*.dylib" -o -name "*.so" \) | head -300)
+          if [[ $FAIL -ne 0 ]]; then echo "混入了非 arm64 二进制"; exit 1; fi
+          echo "全部二进制均为 arm64"
 
       - name: 修 Info.plist
         env:
