@@ -1,0 +1,88 @@
+name: build-windows
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      onefile:
+        description: "打成单个 exe（启动稍慢）"
+        type: boolean
+        default: false
+
+jobs:
+  build:
+    name: Windows x64
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller
+
+      - name: 自检
+        run: |
+          $env:QT_QPA_PLATFORM = "offscreen"
+          python -c "import dictionary_model, dictionary_render; from demo_data import DEMO; e=[dictionary_model.normalize_entry(x) for x in DEMO]; i=dictionary_model.Index(e); h=dictionary_render.entry_html(e[0],i,[],[]); print('self-check ok', len(e), len(h))"
+
+      - name: PyInstaller 打包
+        env:
+          APP_NAME: ${{ vars.WIN_APP_NAME || '词典' }}
+        run: |
+          $mode = if ('${{ inputs.onefile }}' -eq 'true') { '--onefile' } else { '--onedir' }
+          python -m PyInstaller `
+            --noconfirm --clean --windowed $mode `
+            --name "$env:APP_NAME" `
+            --exclude-module PySide6.QtWebEngineCore `
+            --exclude-module PySide6.QtWebEngineWidgets `
+            --exclude-module PySide6.Qt3DCore `
+            --exclude-module PySide6.QtMultimedia `
+            --exclude-module tkinter `
+            app.py
+
+      - name: 检查产物大小
+        env:
+          APP_NAME: ${{ vars.WIN_APP_NAME || '词典' }}
+        run: |
+          Get-ChildItem dist -Recurse -File | Measure-Object -Property Length -Sum |
+            ForEach-Object { "产物合计 {0:N1} MB" -f ($_.Sum / 1MB) }
+
+      - name: 压缩
+        env:
+          APP_NAME: ${{ vars.WIN_APP_NAME || '词典' }}
+        run: |
+          Compress-Archive -Path "dist/$env:APP_NAME" -DestinationPath "dist/$env:APP_NAME-windows-x64.zip" -Force
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Windows x64
+          path: dist/*.zip
+          if-no-files-found: error
+
+  release:
+    name: 发布到 Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*.zip
+          generate_release_notes: true
