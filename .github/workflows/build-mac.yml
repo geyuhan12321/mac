@@ -18,7 +18,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-14
+          # macos-15 = Apple Silicon (arm64)，本账号实测可用
+          # macos-14 在该账号下会报 "configuration not supported"，勿改回
+          - os: macos-15
             name: Apple Silicon (arm64)
             arch: arm64
 
@@ -30,6 +32,16 @@ jobs:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: requirements.txt
+
+      - name: 确认 runner 架构
+        run: |
+          echo "uname: $(uname -m)"
+          echo "sw_vers: $(sw_vers -productVersion)"
+          echo "python: $(python -c 'import platform;print(platform.machine())')"
+          if [[ "$(uname -m)" != "arm64" ]]; then
+            echo "错误：构建机不是 arm64，产出不会是原生包"
+            exit 1
+          fi
 
       - name: 安装依赖
         run: |
