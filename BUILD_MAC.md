@@ -1,5 +1,8 @@
 # 苹果系统打包（GitHub Actions）
 
+> **当前进度**：本地 git 仓库已初始化并提交，`.gitignore` 已排除私人词库，Windows 流水线也已就位。
+> 剩下的只有 `git remote add origin … && git push -u origin main` 这一步——它需要你的 GitHub 账号。
+
 Windows 机器打不出能双击的 macOS `.app`——PyInstaller 只能为目标平台编译原生解释器和 Qt 框架。所以用 GitHub 免费的 `macos-14`（Apple Silicon）和 `macos-13`（Intel）两台机器各打一份，打完直接下载。
 
 工作流文件：[.github/workflows/build-mac.yml](.github/workflows/build-mac.yml)
