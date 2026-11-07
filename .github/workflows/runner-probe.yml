@@ -1,0 +1,57 @@
+name: runner-probe
+
+# 临时探针：逐个尝试不同 runner 标签，看这个账号究竟能拿到哪些机器。
+# 结论出来后可以删掉本文件。
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe-mac14:
+    name: "probe: macos-14"
+    runs-on: macos-14
+    steps:
+      - run: |
+          uname -m
+          sw_vers
+          echo "macos-14 OK"
+
+  probe-mac14-alt:
+    name: "probe: macos-14 (显式 arch)"
+    runs-on: macos-14
+    steps:
+      - run: |
+          uname -m
+          echo "macos-14 alt OK"
+
+  probe-mac15:
+    name: "probe: macos-15"
+    runs-on: macos-15
+    steps:
+      - run: |
+          uname -m
+          echo "macos-15 OK"
+
+  probe-mac13:
+    name: "probe: macos-13"
+    runs-on: macos-13
+    steps:
+      - run: |
+          uname -m
+          sw_vers
+          echo "macos-13 OK"
+
+  probe-ubuntu:
+    name: "probe: ubuntu-latest"
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          uname -a
+          echo "ubuntu OK"
+
+  probe-windows:
+    name: "probe: windows-latest"
+    runs-on: windows-latest
+    steps:
+      - run: |
+          echo "windows OK"
