@@ -11,3 +11,5 @@ preview/
 
 # 临时脚本
 _*.py
+# 第三方数据缓存（可由脚本重新下载）
+data/xinhua.json

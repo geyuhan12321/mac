@@ -25,6 +25,17 @@ import dictionary_render as rw
 APP_DIR = Path(__file__).resolve().parent
 
 
+_TONE_MAP = str.maketrans(
+    "āáǎàēéěèīíǐìōóǒòūúǔùǖǘǚǜńňḿ",
+    "aaaaeeeeiiiioooouuuuüüüünnm",
+)
+
+
+def _strip_tone(text: str) -> str:
+    """去掉拼音声调，便于「ai」搜「ài」。"""
+    return (text or "").translate(_TONE_MAP).lower()
+
+
 def dm_factor(delta: float) -> float:
     """把增量夹到 -4 ~ +10 之间，并按 0.5 对齐。"""
     d = max(-4.0, min(10.0, float(delta)))
@@ -1014,9 +1025,11 @@ class DictWindow(QMainWindow):
             if lang == "英文" and e.get("lang") != "en":
                 continue
             if q:
+                py = (e.get("pronunciation") or {}).get("pinyin", "")
                 hay = " ".join([
                     e["headword"],
-                    (e.get("pronunciation") or {}).get("pinyin", ""),
+                    py,
+                    _strip_tone(py),          # ai 也能搜到 ài
                     (e.get("pronunciation") or {}).get("uk", ""),
                     " ".join(e.get("tags") or []),
                 ] + [s.get("definition", "") + " " + s.get("definitionZh", "")

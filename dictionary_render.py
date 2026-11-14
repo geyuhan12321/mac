@@ -415,6 +415,14 @@ def entry_html(entry: dict, index, backlinks: list[dict], occurrences: list[dict
         more = f'<span style="color:{MUTED};font-size:{fs('label')};">　还有 {len(misses) - 8} 个</span>' if len(misses) > 8 else ""
         side.append(_section("例句里还没收录的词", f'<p style="margin:0;font-size:{fs('side')};">{items}{more}</p>'))
 
+    # 侧栏没有实际内容时整列不渲染，正文占满
+    has_side = any(k in entry and entry[k] for k in ("frequency", "wordForms", "tags")) \
+        or bool(backlinks) or bool(occurrences)
+
+    if not has_side:
+        return f'<table width="100%" cellspacing="0" cellpadding="0"><tr>' \
+               f'<td width="100%" valign="top">{main}</td></tr></table>'
+
     aside = '<table width="100%" cellspacing="0" cellpadding="0"><tr><td>' + "".join(side) + '</td></tr></table>'
 
     return (
