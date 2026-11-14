@@ -48,21 +48,29 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt pyinstaller
 
-      - name: 自检（无界面，确认能导入）
+      - name: 自检（无界面，读真实词库）
         run: |
           python - <<'PY'
-          import os
+          import json, os
           os.environ["QT_QPA_PLATFORM"] = "offscreen"
           from PySide6.QtWidgets import QApplication
           import dictionary_model, dictionary_render
-          from demo_data import DEMO
+          repo = json.load(open("data/words.json", encoding="utf-8"))
           app = QApplication([])
-          entries = [dictionary_model.normalize_entry(x) for x in DEMO]
+          entries = [dictionary_model.normalize_entry(x) for x in repo[:50]]
           idx = dictionary_model.Index(entries)
           html = dictionary_render.entry_html(entries[0], idx, [], [])
-          assert "app://w/" in html or len(html) > 500
-          print("self-check ok:", len(entries), "entries, html", len(html), "chars")
+          assert len(html) > 200, "渲染结果过短"
+          imgs = sum(1 for e in repo if e.get("images"))
+          print(f"self-check ok: 词库 {len(repo)} 条（{imgs} 条带图），渲染 {len(html)} 字符")
           PY
+
+      - name: 检查数据是否齐全
+        run: |
+          test -f data/words.json || { echo "缺少 data/words.json"; exit 1; }
+          N=$(ls data/images/*.jpg 2>/dev/null | wc -l | tr -d ' ')
+          echo "字源图 $N 张"
+          test "$N" -gt 0 || echo "警告：没有图片"
 
       - name: PyInstaller 打包
         env:
@@ -77,6 +85,8 @@ jobs:
             --exclude-module PySide6.Qt3DCore \
             --exclude-module PySide6.QtMultimedia \
             --exclude-module tkinter \
+            --add-data "data/words.json:data" \
+            --add-data "data/images:data/images" \
             app.py
 
       - name: 校验确实打出了 arm64 原生包
