@@ -32,10 +32,29 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt pyinstaller
 
-      - name: 自检
+      - name: 自检（读真实词库）
         run: |
           $env:QT_QPA_PLATFORM = "offscreen"
-          python -c "import dictionary_model, dictionary_render; from demo_data import DEMO; e=[dictionary_model.normalize_entry(x) for x in DEMO]; i=dictionary_model.Index(e); h=dictionary_render.entry_html(e[0],i,[],[]); print('self-check ok', len(e), len(h))"
+          python -c @"
+          import json, os
+          from PySide6.QtWidgets import QApplication
+          import dictionary_model, dictionary_render
+          repo = json.load(open('data/words.json', encoding='utf-8'))
+          app = QApplication([])
+          entries = [dictionary_model.normalize_entry(x) for x in repo[:50]]
+          idx = dictionary_model.Index(entries)
+          html = dictionary_render.entry_html(entries[0], idx, [], [])
+          assert len(html) > 200
+          imgs = sum(1 for e in repo if e.get('images'))
+          print(f'self-check ok: 词库 {len(repo)} 条（{imgs} 条带图），渲染 {len(html)} 字符')
+          "@
+
+      - name: 检查数据是否齐全
+        run: |
+          if (-not (Test-Path data/words.json)) { throw "缺少 data/words.json" }
+          $n = (Get-ChildItem data/images/*.jpg -ErrorAction SilentlyContinue).Count
+          Write-Host "字源图 $n 张"
+          if ($n -eq 0) { Write-Warning "没有图片" }
 
       - name: PyInstaller 打包
         env:
@@ -50,6 +69,8 @@ jobs:
             --exclude-module PySide6.Qt3DCore `
             --exclude-module PySide6.QtMultimedia `
             --exclude-module tkinter `
+            --add-data "data/words.json;data" `
+            --add-data "data/images;data/images" `
             app.py
 
       - name: 检查产物大小
@@ -64,6 +85,9 @@ jobs:
           APP_NAME: ${{ vars.WIN_APP_NAME || 'Dict' }}
         run: |
           Compress-Archive -Path "dist/$env:APP_NAME" -DestinationPath "dist/$env:APP_NAME-windows-x64.zip" -Force
+          $zip = Get-Item "dist/$env:APP_NAME-windows-x64.zip"
+          Write-Host ("压缩包 {0:N1} MB" -f ($zip.Length / 1MB))
+          if ($zip.Length -lt 50MB) { throw "压缩包过小，可能没打进数据" }
 
       - uses: actions/upload-artifact@v4
         with:
