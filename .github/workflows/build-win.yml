@@ -39,7 +39,7 @@ jobs:
 
       - name: PyInstaller 打包
         env:
-          APP_NAME: ${{ vars.WIN_APP_NAME || '词典' }}
+          APP_NAME: ${{ vars.WIN_APP_NAME || 'Dict' }}
         run: |
           $mode = if ('${{ inputs.onefile }}' -eq 'true') { '--onefile' } else { '--onedir' }
           python -m PyInstaller `
@@ -54,14 +54,14 @@ jobs:
 
       - name: 检查产物大小
         env:
-          APP_NAME: ${{ vars.WIN_APP_NAME || '词典' }}
+          APP_NAME: ${{ vars.WIN_APP_NAME || 'Dict' }}
         run: |
           Get-ChildItem dist -Recurse -File | Measure-Object -Property Length -Sum |
             ForEach-Object { "产物合计 {0:N1} MB" -f ($_.Sum / 1MB) }
 
       - name: 压缩
         env:
-          APP_NAME: ${{ vars.WIN_APP_NAME || '词典' }}
+          APP_NAME: ${{ vars.WIN_APP_NAME || 'Dict' }}
         run: |
           Compress-Archive -Path "dist/$env:APP_NAME" -DestinationPath "dist/$env:APP_NAME-windows-x64.zip" -Force
 
