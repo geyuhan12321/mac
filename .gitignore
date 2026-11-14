@@ -1,3 +1,4 @@
+# 构建产物
 .venv-build/
 build/
 dist/
@@ -5,8 +6,14 @@ __pycache__/
 *.spec
 *.pyc
 
-# 私人词库，不要上传
+# 用户数据：词库与图片共约 106MB，体积大且属私人数据，不进仓库
+# 换机器时用 import_pptx.py 重新生成，或手动拷贝 data 目录
 data/words.json
+data/images/
+data/settings.json
 
 # 本地截图
 preview/
+
+# 临时脚本
+_*.py

@@ -120,6 +120,22 @@ def _phrases(v: Any) -> list[dict]:
     return [x for x in out if x["phrase"]]
 
 
+def _images(v: Any) -> list[dict]:
+    """图片列表：[{file: 'xxx.png', caption: '说明'}]，也接受纯文件名数组。"""
+    out: list[dict] = []
+    if isinstance(v, list):
+        for x in v:
+            if isinstance(x, str):
+                out.append({"file": x.strip(), "caption": ""})
+            elif isinstance(x, dict):
+                f = _s(x.get("file") or x.get("path") or x.get("src"))
+                if f:
+                    out.append({"file": f, "caption": _s(x.get("caption") or x.get("说明"))})
+    elif isinstance(v, str):
+        out = [{"file": t.strip(), "caption": ""} for t in _list(v)]
+    return [x for x in out if x["file"]]
+
+
 def _sense(raw: Any) -> dict | None:
     if raw is None:
         return None
@@ -139,6 +155,7 @@ def _sense(raw: Any) -> dict | None:
         "definition": _s(raw.get("definition") or raw.get("def") or raw.get("释义")),
         "definitionZh": _s(raw.get("definitionZh") or raw.get("definition_zh") or raw.get("中文释义")),
         "examples": ex,
+        "images": _images(raw.get("images") or raw.get("图片")),
         "synonyms": _list(raw.get("synonyms") or raw.get("同义词") or raw.get("近义词")),
         "collocations": _list(raw.get("collocations") or raw.get("搭配")),
         "labels": _list(raw.get("labels") or raw.get("标注")),
@@ -208,6 +225,7 @@ def normalize_entry(raw: Any) -> dict | None:
         "senses": senses,
         "phrases": _phrases(raw.get("phrases") or raw.get("短语")),
         "etymology": _s(raw.get("etymology") or raw.get("词源")),
+        "images": _images(raw.get("images") or raw.get("图片")),
         "tags": _list(raw.get("tags") or raw.get("分类")),
         "source": _s(raw.get("source") or raw.get("来源")),
         "updatedAt": _s(raw.get("updatedAt")) or time.strftime("%Y-%m-%dT%H:%M:%S"),
