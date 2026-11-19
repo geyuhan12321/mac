@@ -154,6 +154,27 @@ QLabel#EditorHint {{ color: #b0b0b0; font-size: {ui_small:.0f}pt; background: tr
 QLabel#FreqDots {{ color: #111111; font-size: {ui:.0f}pt; letter-spacing: 2px; background: transparent; }}
 QWidget#CharBar {{ background: transparent; }}
 QWidget#CharCell {{ background: #ffffff; border: 1px solid #e6e6e6; }}
+QPlainTextEdit#EditorArea QScrollBar:vertical {{
+    width: 7px; background: transparent; margin: 0;
+}}
+QPlainTextEdit#EditorArea QScrollBar::add-line:vertical,
+QPlainTextEdit#EditorArea QScrollBar::sub-line:vertical {{
+    height: 0; background: transparent; border: none;
+}}
+QPlainTextEdit#EditorArea QScrollBar::add-page:vertical,
+QPlainTextEdit#EditorArea QScrollBar::sub-page:vertical {{
+    background: transparent;
+}}
+QPlainTextEdit#EditorArea QScrollBar::handle:vertical {{
+    background: #d8d8d8; min-height: 18px; border-radius: 3px;
+}}
+QPlainTextEdit#EditorArea QScrollBar::handle:vertical:hover {{
+    background: #bdbdbd;
+}}
+QLabel#DupHint {{
+    color: #8a8a8a; font-size: 8pt; letter-spacing: 1px;
+    padding-left: 2px;
+}}
 QLabel#EditorCap {{
     color: #9a9a9a; font-size: {ui_small:.0f}pt; letter-spacing: 1px;
     background: transparent; padding-top: 4px;
@@ -312,9 +333,12 @@ class EntryEditor(QDialog):
     样式做成「下划虚线 / 细框」，填了内容也能看出是什么。
     """
 
-    def __init__(self, parent=None, entry: dict | None = None, prefill: str = ""):
+    def __init__(self, parent=None, entry: dict | None = None, prefill: str = "",
+                 existing: set[str] | None = None):
         super().__init__(parent)
         self.entry = entry
+        self.existing: set[str] = set(existing or ())
+        self.dup_head = ""          # 若用户坚持重名保存，这里记下名字
         self._images: list[dict] = []      # 词条级图片（由字段粘贴收集）
         self._sense_rows: list[dict] = []
 
@@ -357,10 +381,19 @@ class EntryEditor(QDialog):
         head_row.setContentsMargins(0, 0, 0, 0)
         self.f_head = self._line("词条", entry["headword"] if entry else prefill, "Headline")
         self.f_head.textChanged.connect(self._sync_lang)
+        self.f_head.textChanged.connect(self._sync_dup)
         self.lang_hint = QLabel("中文")
         self.lang_hint.setObjectName("EditorHint")
         self.lang_hint.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
-        head_row.addWidget(self._wrap(self.f_head), 1)
+        head_box = QVBoxLayout()
+        head_box.setContentsMargins(0, 0, 0, 0)
+        head_box.setSpacing(2)
+        head_box.addWidget(self._wrap(self.f_head))
+        self.dup_hint = QLabel("")
+        self.dup_hint.setObjectName("DupHint")
+        self.dup_hint.setVisible(False)
+        head_box.addWidget(self.dup_hint)
+        head_row.addLayout(head_box, 1)
         head_row.addWidget(self.lang_hint)
         self.form.addLayout(head_row)
 
@@ -430,7 +463,7 @@ class EntryEditor(QDialog):
         self.form.addWidget(self._wrap(self.f_phrases))
 
         self.form.addWidget(self._section("词源"))
-        self.f_etym = self._line("如：形声字，从足包声", (entry or {}).get("etymology", ""))
+        self.f_etym = self._area("如：形声字，从足包声（可换行）", (entry or {}).get("etymology", ""), 52)
         self.form.addWidget(self._wrap(self.f_etym))
         self.form.addStretch(1)
 
@@ -606,6 +639,37 @@ class EntryEditor(QDialog):
         lbl.setObjectName("EditorCap")
         return lbl
 
+    # ---------------------------------------------------------------- 查重
+    def _is_dup(self, head: str) -> bool:
+        """这个词头是否与词库里已有条目重名（编辑自己不算）。"""
+        head = (head or "").strip()
+        if not head or head not in self.existing:
+            return False
+        if self.entry and self.entry.get("headword") == head:
+            return False
+        return True
+
+    def _sync_dup(self):
+        head = self.f_head.text().strip()
+        if self._is_dup(head):
+            self.dup_hint.setText(f"词库里已有「{head}」")
+            self.dup_hint.setVisible(True)
+        else:
+            self.dup_hint.setVisible(False)
+
+    def _ask_duplicate(self, head: str) -> bool:
+        """重名时弹窗；返回 True 表示继续保存。"""
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("查重")
+        box.setText(f"词库里已经有「{head}」了。")
+        box.setInformativeText("重名保存会产生两条同名词条，链接会指向先出现的那条。")
+        b_back = box.addButton("返回修改", QMessageBox.ButtonRole.RejectRole)
+        b_save = box.addButton("仍然保存", QMessageBox.ButtonRole.DestructiveRole)
+        box.setDefaultButton(b_back)
+        box.exec()
+        return box.clickedButton() is b_save
+
     # ---------------------------------------------------------------- 联动
     def _sync_lang(self):
         zh = dm.has_cjk(self.f_head.text())
@@ -638,12 +702,16 @@ class EntryEditor(QDialog):
         col.setSpacing(1)
         f_pos = self._line("动词 / VERB", data.get("pos", ""), "SenseTag")
         f_def = self._area("柯林斯式整句释义最佳", data.get("definition", ""), 62)
-        f_zh = self._line("可选", data.get("definitionZh", ""), "EditorField")
+        f_zh = self._area("可选，可换行", data.get("definitionZh", ""), 52)
         ex = (data.get("examples") or [{}])[0]
         f_ex = self._area("可选；写进去以后句中的词也能点", ex.get("text", ""), 54)
-        f_extr = self._line("可选", ex.get("translation", ""), "EditorField")
-        f_meta = self._line("用 | 分隔",
-                            "|".join((data.get("synonyms") or []) + (data.get("collocations") or [])))
+        f_extr = self._area("可选，可换行", ex.get("translation", ""), 46)
+        f_meta = self._area(
+            "每行一项，也可用 | 分隔",
+            "\n".join((data.get("synonyms") or []) + (data.get("collocations") or [])
+                      + (data.get("labels") or [])),
+            54,
+        )
         for cap, w in (("词性", f_pos), ("释义", f_def), ("译文", f_zh),
                        ("例句", f_ex), ("例句翻译", f_extr), ("近义 / 搭配 / 标注", f_meta)):
             col.addWidget(self._cap(cap))
@@ -691,6 +759,15 @@ class EntryEditor(QDialog):
             QMessageBox.warning(self, "缺词条", "词条名不能为空。")
             return
 
+        # 查重：词头与已有条目重名时先问
+        self.dup_head = ""
+        if self._is_dup(head):
+            if not self._ask_duplicate(head):
+                self.f_head.setFocus()
+                self.f_head.selectAll()
+                return
+            self.dup_head = head
+
         # 词条级图片：来自左栏/侧栏那些字段
         entry_fields = [self.f_head, self.f_pron, self.f_forms,
                         self.f_phrases, self.f_etym, self.f_tags,
@@ -702,21 +779,26 @@ class EntryEditor(QDialog):
 
         senses = []
         for r in self._sense_rows:
-            definition = r["def"].toPlainText().strip()
+            definition = r["def"].toPlainText().rstrip()
             if not definition:
                 continue
-            example = r["ex"].toPlainText().strip()
+            example = r["ex"].toPlainText().rstrip()
             senses.append({
                 "pos": r["pos"].text().strip(),
                 "definition": definition,
-                "definitionZh": r["zh"].text().strip(),
+                "definitionZh": r["zh"].toPlainText().rstrip(),
                 "images": (r.get("images") or []) + [
                     im for f in (r["pos"], r["def"], r["zh"], r["ex"], r["extr"], r["meta"])
                     for im in (getattr(f, "_img_list", []) or [])
                 ],
-                "examples": ([{"text": example, "translation": r["extr"].text().strip()}]
+                "examples": ([{"text": example, "translation": r["extr"].toPlainText().rstrip()}]
                              if example else []),
-                "synonyms": [x.strip() for x in r["meta"].text().split("|") if x.strip()],
+                "synonyms": [
+                    item.strip()
+                    for line in r["meta"].toPlainText().splitlines()
+                    for item in re.split(r"[|｜]", line)
+                    if item.strip()
+                ],
             })
         if not senses:
             QMessageBox.warning(self, "缺释义", "至少写一条释义。")
@@ -744,7 +826,7 @@ class EntryEditor(QDialog):
                           for v in self.f_forms.text().replace("，", ",").split(",") if v.strip()],
             "senses": senses,
             "phrases": phrases,
-            "etymology": self.f_etym.text().strip(),
+            "etymology": self.f_etym.toPlainText().rstrip(),
             "images": entry_imgs,
             "tags": [t.strip() for t in self.f_tags.text().replace(",", "、").split("、") if t.strip()],
         }
@@ -756,6 +838,8 @@ class EntryEditor(QDialog):
             }
         if self.entry:
             raw["id"] = self.entry["id"]
+        elif self.dup_head:
+            raw["id"] = ""      # 交给 normalize 生成唯一 id，避免撞车
         self.result_entry = dm.normalize_entry(raw)
         if not self.result_entry:
             QMessageBox.warning(self, "保存失败", "数据不完整。")
@@ -1178,7 +1262,8 @@ class DictWindow(QMainWindow):
 
     # ---------------------------------------------------------------- 词条操作
     def new_entry(self, prefill: str = ""):
-        dlg = EntryEditor(self, prefill=prefill)
+        dlg = EntryEditor(self, prefill=prefill,
+                          existing={e["headword"] for e in self.entries})
         if dlg.exec() == QDialog.DialogCode.Accepted:
             entry = dlg.result_entry
             if not entry:
@@ -1192,7 +1277,8 @@ class DictWindow(QMainWindow):
         if not entry:
             QMessageBox.information(self, "没有选中", "先在左侧选一个词条。")
             return
-        dlg = EntryEditor(self, entry=entry)
+        dlg = EntryEditor(self, entry=entry,
+                          existing={e["headword"] for e in self.entries})
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         updated = dlg.result_entry

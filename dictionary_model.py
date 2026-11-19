@@ -43,6 +43,14 @@ def _s(v: Any) -> str:
     return "" if v is None else str(v).strip()
 
 
+def _text(v: Any) -> str:
+    """多行正文：只去尾部空白，保留行首缩进与内部换行。"""
+    if v is None:
+        return ""
+    text = str(v).replace("\r\n", "\n").replace("\r", "\n")
+    return text.rstrip()
+
+
 def _list(v: Any) -> list[str]:
     if isinstance(v, list):
         return [_s(x) for x in v if _s(x)]
@@ -152,8 +160,8 @@ def _sense(raw: Any) -> dict | None:
                "source": _s(raw.get("example_source") or raw.get("例句来源"))} for i, t in enumerate(left)]
     return {
         "pos": _s(raw.get("pos") or raw.get("词性")),
-        "definition": _s(raw.get("definition") or raw.get("def") or raw.get("释义")),
-        "definitionZh": _s(raw.get("definitionZh") or raw.get("definition_zh") or raw.get("中文释义")),
+        "definition": _text(raw.get("definition") or raw.get("def") or raw.get("释义")),
+        "definitionZh": _text(raw.get("definitionZh") or raw.get("definition_zh") or raw.get("中文释义")),
         "examples": ex,
         "images": _images(raw.get("images") or raw.get("图片")),
         "synonyms": _list(raw.get("synonyms") or raw.get("同义词") or raw.get("近义词")),

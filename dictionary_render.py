@@ -101,6 +101,17 @@ def image_url(filename: str) -> str:
         return ""
 
 
+def nl(html_text: str) -> str:
+    """换行 → <br>，行首缩进 → &nbsp;，让输入的内容原样显示。"""
+    text = html_text.replace("\r\n", "\n").replace("\t", "    ").replace("\u3000", "  ")
+    out = []
+    for line in text.split("\n"):
+        stripped = line.lstrip(" ")
+        lead = len(line) - len(stripped)
+        out.append("&nbsp;" * lead + stripped if lead else stripped)
+    return "<br>".join(out)
+
+
 def esc(text) -> str:
     return escape(str(text or ""), quote=False)
 
@@ -166,17 +177,15 @@ def link_html(text: str, entry: dict, index) -> str:
 
 
 def _meta(sense: dict) -> str:
-    groups: list[str] = []
-    if sense.get("synonyms"):
-        groups.append("同义词 " + "、".join(sense["synonyms"]))
-    if sense.get("collocations"):
-        groups.append("搭配 " + "、".join(sense["collocations"]))
-    if sense.get("labels"):
-        groups.append("、".join(sense["labels"]))
-    if not groups:
+    """近义 / 搭配 / 标注：每项占一行，原样显示。"""
+    items = (sense.get("synonyms") or []) + (sense.get("collocations") or []) \
+        + (sense.get("labels") or [])
+    items = [i for i in items if str(i).strip()]
+    if not items:
         return ""
-    sep = '<span style="color:#d6d6d6;">\u3000\uff5c\u3000</span>'
-    return f'<p style="margin:9px 0 0;font-size:{fs('meta')};color:{GRAY};">{sep.join(groups)}</p>'
+    body = "<br>".join(nl(esc(i)) for i in items)
+    return (f'<p style="margin:9px 0 0;font-size:{fs('meta')};color:{GRAY};'
+            f'line-height:1.6;">{body}</p>')
 
 
 def _sense(sense: dict, idx: int, entry: dict, index) -> str:
@@ -187,28 +196,28 @@ def _sense(sense: dict, idx: int, entry: dict, index) -> str:
             f'{esc(sense["pos"]).upper()}</p>'
         )
     if sense.get("definition"):
-        body = link_html(sense["definition"], entry, index).replace("\n", "<br>")
+        body = nl(link_html(sense["definition"], entry, index))
         bits.append(f'<p style="margin:0 0 4px;color:{INK};font-size:{fs('def')};line-height:1.75;">'
                     f'{body}</p>')
     if sense.get("definitionZh"):
         bits.append(f'<p style="margin:0 0 7px;color:{GRAY};font-size:{fs('zh')};">'
-                    f'{esc(sense["definitionZh"])}</p>')
+                    f'{nl(esc(sense["definitionZh"]))}</p>')
 
     for ex in sense.get("examples") or []:
-        inner = f'<span style="font-size:{fs('ex')};color:#333333;">{link_html(ex.get("text", ""), entry, index)}</span>'
+        inner = f'<span style="font-size:{fs('ex')};color:#333333;">{nl(link_html(ex.get("text", ""), entry, index))}</span>'
         if ex.get("translation"):
             inner += (f'<p style="margin:3px 0 0;color:{MUTED};font-size:{fs('note')};">'
-                      f'{esc(ex["translation"])}</p>')
+                      f'{nl(esc(ex["translation"]))}</p>')
         if ex.get("source"):
             inner += (f'<p style="margin:2px 0 0;color:#b3b3b3;font-size:{fs('label')};">'
-                      f'{esc(ex["source"])}</p>')
+                      f'{nl(esc(ex["source"]))}</p>')
         bits.append(
             f'<table width="100%" cellspacing="0" cellpadding="5"><tr>'
             f'<td style="border-left:2px solid #e0e0e0;">{inner}</td></tr></table>'
         )
     if sense.get("note"):
         bits.append(f'<p style="margin:5px 0 0;color:{MUTED};font-size:{fs('note')};">'
-                    f'用法 {esc(sense["note"])}</p>')
+                    f'用法 {nl(esc(sense["note"]))}</p>')
     bits.append(_meta(sense))
     for im in sense.get("images") or []:
         url = image_url(im.get("file", ""))
@@ -350,7 +359,7 @@ def entry_html(entry: dict, index, backlinks: list[dict], occurrences: list[dict
         rows = "".join(
             f'<p style="margin:0 0 4px;font-size:{fs('zh')};">'
             f'{esc(p.get("phrase"))}'
-            f'{("　" + esc(p.get("meaning"))) if p.get("meaning") else ""}</p>'
+            f'{("　" + nl(esc(p.get("meaning")))) if p.get("meaning") else ""}</p>'
             for p in entry["phrases"]
         )
         phrases = _section("短语 / 习语", rows)
@@ -358,7 +367,7 @@ def entry_html(entry: dict, index, backlinks: list[dict], occurrences: list[dict
     etymology = ""
     if entry.get("etymology"):
         etymology = _section("词源", f'<p style="margin:0;font-size:{fs('sub')};color:{GRAY};">'
-                                    f'{esc(entry["etymology"])}</p>')
+                                    f'{nl(esc(entry["etymology"]))}</p>')
 
     actions = (
         f'<p style="margin:26px 0 0;font-size:{fs('sub')};">'
