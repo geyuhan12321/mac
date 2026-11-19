@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import re
+import os
+import shutil
 import sys
 import uuid
 from pathlib import Path
@@ -42,30 +44,107 @@ def dm_factor(delta: float) -> float:
     return round(d * 2) / 2
 
 
-def _pick_data_dir() -> Path:
-    """优先用脚本旁边的 data/（Windows 绿色版）。
+def _is_frozen() -> bool:
+    return bool(getattr(sys, "frozen", False))
 
-    打成 macOS .app 后脚本在只读的 bundle 里，写不进去，
-    这时退到 ~/Library/Application Support/词典/data。
-    """
-    beside = APP_DIR / "data"
+
+def _bundle_data_dir() -> Path | None:
+    """打包进程序的只读数据目录（词库 + 图片）。"""
+    cands: list[Path] = []
+    meipass = getattr(sys, "_MEIPASS", "")
+    if meipass:
+        mp = Path(meipass)
+        cands += [mp / "data", mp.parent / "Resources" / "data", mp.parent / "data"]
+    exe = Path(sys.executable).resolve()
+    # macOS .app: Contents/MacOS/Dict → Contents/Resources/data
+    cands += [
+        exe.parent.parent / "Resources" / "data",
+        exe.parent / "data",
+        exe.parent.parent / "data",
+    ]
+    cands.append(APP_DIR / "data")
+    for c in cands:
+        if (c / "words.json").exists():
+            return c
+    return None
+
+
+def _writable(path: Path) -> bool:
+    """真去写一个探针文件，确认目录可用。"""
     try:
-        beside.mkdir(parents=True, exist_ok=True)
-        probe = beside / ".writable"
+        path.mkdir(parents=True, exist_ok=True)
+        probe = path / ".writable"
         probe.write_text("ok", encoding="utf-8")
         probe.unlink()
-        return beside
-    except OSError:
-        fallback = Path.home() / "Library" / "Application Support" / "词典" / "data"
-        fallback.mkdir(parents=True, exist_ok=True)
-        return fallback
+        return True
+    except OSError as exc:
+        DIR_ERRORS.append(f"{type(exc).__name__}: {exc}")
+        return False
 
 
-DATA_DIR = _pick_data_dir()
+def _user_data_dir() -> Path:
+    """可写的用户数据目录，按顺序尝试几个常见位置。"""
+    cands: list[Path] = []
+    if sys.platform == "darwin":
+        cands.append(Path.home() / "Library" / "Application Support" / "Dict" / "data")
+    if os.name == "nt":
+        appdata = os.environ.get("APPDATA")
+        local = os.environ.get("LOCALAPPDATA")
+        if appdata:
+            cands.append(Path(appdata) / "Dict" / "data")
+        if local:
+            cands.append(Path(local) / "Dict" / "data")
+    cands.append(Path.home() / "Dict" / "data")
+    cands.append(Path.home() / ".dict" / "data")
+
+    for c in cands:
+        good = _writable(c)
+        DIR_ATTEMPTS.append(f"{'ok ' if good else 'no '} {c}")
+        if good:
+            return c
+    return cands[-1]
+
+
+COPY_ERROR = ""
+DIR_ATTEMPTS: list[str] = []
+DIR_ERRORS: list[str] = []
+BUNDLE_DATA = _bundle_data_dir()
+
+# 数据目录优先级：环境变量 > 源码旁边 > 用户目录
+_env_dir = os.environ.get("DICT_DATA_DIR", "").strip()
+if _env_dir:
+    DATA_DIR = Path(_env_dir).expanduser()
+elif not _is_frozen() and (APP_DIR / "data" / "words.json").exists():
+    DATA_DIR = APP_DIR / "data"
+else:
+    DATA_DIR = _user_data_dir()
+
+try:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+except OSError:
+    pass
 WORDS_PATH = DATA_DIR / "words.json"
+
+# 首次运行：把随包词库复制到用户目录，之后改的是这一份
+if not WORDS_PATH.exists() and BUNDLE_DATA and (BUNDLE_DATA / "words.json").exists():
+    try:
+        shutil.copy2(BUNDLE_DATA / "words.json", WORDS_PATH)
+    except OSError as exc:
+        COPY_ERROR = f"{type(exc).__name__}: {exc}"
+        WORDS_PATH = BUNDLE_DATA / "words.json"
+
 IMAGES_DIR = DATA_DIR / "images"
-IMAGES_DIR.mkdir(parents=True, exist_ok=True)
-rw.set_image_root(IMAGES_DIR)
+try:
+    IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+except OSError:
+    pass
+
+# 图片：先找用户目录（新粘贴的），再找随包资源
+_IMAGE_ROOTS: list[Path] = [IMAGES_DIR]
+if BUNDLE_DATA and (BUNDLE_DATA / "images").is_dir():
+    _IMAGE_ROOTS.append(BUNDLE_DATA / "images")
+rw.set_image_roots(_IMAGE_ROOTS)
+
 
 def build_qss() -> str:
     """按当前字号增量生成样式表：外壳所有文字与正文同步缩放。"""
@@ -999,6 +1078,7 @@ class DictWindow(QMainWindow):
         self._action(m_file, "导出 JSON…", self.export_json)
         self._action(m_file, "导出 CSV…", self.export_csv)
         m_file.addSeparator()
+        self._action(m_file, "数据信息", self.show_data_info)
         self._action(m_file, "打开数据文件夹", self.open_data_dir)
         m_file.addSeparator()
         self._action(m_file, "退出", self.close, "Ctrl+Q")
@@ -1055,13 +1135,24 @@ class DictWindow(QMainWindow):
         return act
 
     # ---------------------------------------------------------------- 数据
-    def _persist(self):
-        dm.save_entries(WORDS_PATH, self.entries)
+    def _persist(self) -> bool:
+        """写盘并重建索引；写不进去时提示，不抛异常。"""
+        try:
+            dm.save_entries(WORDS_PATH, self.entries)
+        except OSError as exc:
+            QMessageBox.warning(
+                self, "保存失败",
+                f"写不进词库文件：\n{WORDS_PATH}\n\n{exc}\n\n"
+                "「文件 → 数据信息」可以查看当前数据目录；\n"
+                "也可以设置环境变量 DICT_DATA_DIR 指到一个可写的位置。")
+            return False
         self.index = dm.Index(self.entries, auto_new=dm.Index.default_auto_new)
+        return True
 
     def _commit(self):
         """写盘 → 重建索引 → 刷新列表 → 重画当前词条：新词立刻在句子里可点。"""
-        self._persist()
+        if not self._persist():
+            return
         self.refresh_list()
         self._rerender()
 
@@ -1467,6 +1558,27 @@ class DictWindow(QMainWindow):
         Path(path).write_text(dm.entries_to_csv(self.entries), encoding="utf-8-sig")
         self.statusBar().showMessage(f"已导出 CSV 到 {path}", 4000)
 
+    def show_data_info(self):
+        """摊开数据位置与条数，便于核对包装得对不对。"""
+        def count_jpg(d: Path) -> int:
+            if not d or not Path(d).is_dir():
+                return 0
+            return len(list(Path(d).glob("*.jpg"))) + len(list(Path(d).glob("*.png")))
+
+        lines = [
+            f"程序模式：{'打包版' if _is_frozen() else '源码运行'}",
+            f"随包数据：{BUNDLE_DATA or '（无）'}",
+            f"用户数据：{DATA_DIR}",
+            f"词库文件：{WORDS_PATH}",
+            f"词库条数：{len(self.entries)}",
+            f"用户图片：{count_jpg(IMAGES_DIR)} 张",
+            f"随包图片：{count_jpg(BUNDLE_DATA / 'images') if BUNDLE_DATA else 0} 张",
+            "",
+            "词库条数应为 4425。若明显偏少，说明读到的是旧数据：",
+            "删掉「用户数据」里的 words.json 再重启，程序会重新从随包数据复制。",
+        ]
+        QMessageBox.information(self, "数据信息", "\n".join(lines))
+
     def open_data_dir(self):
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(DATA_DIR)))
@@ -1568,6 +1680,31 @@ def main() -> int:
     return app.exec()
 
 
+def print_data_info() -> int:
+    """打包后排查用：不开窗口，只报告数据落在哪、读到多少条。"""
+    entries = dm.load_entries(WORDS_PATH) if WORDS_PATH.exists() else []
+    img_user = len(list(IMAGES_DIR.glob("*.jpg"))) if IMAGES_DIR.is_dir() else 0
+    img_bundle = 0
+    if BUNDLE_DATA and (BUNDLE_DATA / "images").is_dir():
+        img_bundle = len(list((BUNDLE_DATA / "images").glob("*.jpg")))
+    print("FROZEN", _is_frozen())
+    print("BUNDLE", BUNDLE_DATA)
+    print("DATA", DATA_DIR)
+    print("WORDS", WORDS_PATH)
+    print("COUNT", len(entries))
+    print("IMG_USER", img_user)
+    print("IMG_BUNDLE", img_bundle)
+    print("IMG_OK", bool(rw.image_url("ppt-00002-1.jpg")))
+    print("COPY_ERROR", COPY_ERROR or "none")
+    for line in DIR_ATTEMPTS:
+        print("DIR", line)
+    for e in DIR_ERRORS:
+        print("ERR", e)
+    return 0
+
+
 if __name__ == "__main__":
+    if os.environ.get("DICT_DATA_INFO"):
+        sys.exit(print_data_info())
     sys.exit(main())
 

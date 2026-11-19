@@ -204,6 +204,19 @@ jobs:
             exit 1
           fi
 
+      - name: 冒烟测试（打包版读取数据）
+        env:
+          APP_NAME: ${{ vars.MAC_APP_NAME || 'Dict' }}
+          DICT_DATA_DIR: ${{ runner.temp }}/dictdata
+        run: |
+          set -euo pipefail
+          BIN="dist/$APP_NAME.app/Contents/MacOS/$APP_NAME"
+          DICT_DATA_INFO=1 "$BIN" | tee /tmp/probe.txt
+          grep -q "FROZEN True" /tmp/probe.txt || { echo "不是打包模式"; exit 1; }
+          grep -q "COUNT 4425" /tmp/probe.txt || { echo "词条数不对"; exit 1; }
+          grep -q "IMG_OK True" /tmp/probe.txt || { echo "图片解析失败"; exit 1; }
+          echo "打包版数据自检通过"
+
       - name: 打包 zip
         env:
           APP_NAME: ${{ vars.MAC_APP_NAME || 'Dict' }}

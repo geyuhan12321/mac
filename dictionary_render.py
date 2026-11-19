@@ -12,6 +12,7 @@ from urllib.parse import quote
 
 # 图片根目录，由 app.py 启动时设置（data/images）
 IMAGE_ROOT = ""
+IMAGE_ROOTS: list[str] = []
 
 INK = "#111111"       # 正文/词目
 GRAY = "#5f5f5f"      # 次级说明
@@ -82,9 +83,32 @@ SANS = "'Microsoft YaHei UI','Microsoft YaHei',Segoe UI,sans-serif"
 
 
 def set_image_root(path) -> None:
-    """告诉渲染层图片存在哪。"""
-    global IMAGE_ROOT
-    IMAGE_ROOT = str(path)
+    """兼容旧调用：设置单一图片目录。"""
+    set_image_roots([path])
+
+
+def set_image_roots(paths) -> None:
+    """图片可能分放多处（用户目录 + 只读资源），按顺序查找。"""
+    global IMAGE_ROOT, IMAGE_ROOTS
+    IMAGE_ROOTS = [str(x) for x in paths if x]
+    IMAGE_ROOT = IMAGE_ROOTS[0] if IMAGE_ROOTS else ""
+
+
+def image_url(filename: str) -> str:
+    """相对文件名 → file:// 地址；依次在各搜索目录里找。"""
+    f = str(filename or "").strip()
+    if not f:
+        return ""
+    if os.path.isabs(f):
+        return Path(f).as_uri() if os.path.exists(f) else ""
+    for root in (IMAGE_ROOTS or [""]):
+        cand = os.path.join(root, f) if root else f
+        if os.path.exists(cand):
+            try:
+                return Path(cand).as_uri()
+            except ValueError:
+                return ""
+    return ""
 
 
 def image_url(filename: str) -> str:
