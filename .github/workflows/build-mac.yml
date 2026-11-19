@@ -112,6 +112,35 @@ jobs:
           if [[ $FAIL -ne 0 ]]; then echo "混入了非 arm64 二进制"; exit 1; fi
           echo "全部二进制均为 arm64"
 
+      - name: 校验 .app 内的词库数据
+        env:
+          APP_NAME: ${{ vars.MAC_APP_NAME || 'Dict' }}
+        run: |
+          set -euo pipefail
+          APP="dist/$APP_NAME.app"
+          WORDS=$(find "$APP" -name words.json | head -1)
+          IMGDIR=$(find "$APP" -type d -name images | head -1)
+          if [[ -z "$WORDS" ]]; then echo "错误：包内找不到 words.json"; exit 1; fi
+          echo "词库文件：$WORDS"
+          echo "图片目录：$IMGDIR"
+          python3 - "$WORDS" <<'PY'
+          import json, sys
+          data = json.load(open(sys.argv[1], encoding="utf-8"))
+          n = len(data)
+          heads = {e["headword"] for e in data}
+          print(f"词条 {n} 条，唯一字头 {len(heads)} 个")
+          for k, f in (("拼音", lambda e: e.get("pronunciation", {}).get("pinyin")),
+                       ("部首", lambda e: (e.get("character") or {}).get("radical")),
+                       ("笔画", lambda e: (e.get("character") or {}).get("strokes")),
+                       ("图片", lambda e: e.get("images"))):
+              print(f"  {k} {sum(1 for e in data if f(e))}")
+          assert n >= 4400, f"词条数过少：{n}"
+          assert len(heads) == n, "存在重复字头"
+          PY
+          N=$(ls "$IMGDIR" 2>/dev/null | wc -l | tr -d " ")
+          echo "图片 $N 张"
+          [[ "$N" -ge 4000 ]] || { echo "错误：图片数量不足（$N）"; exit 1; }
+
       - name: 修 Info.plist
         env:
           APP_NAME: ${{ vars.MAC_APP_NAME || 'Dict' }}
