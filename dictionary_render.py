@@ -340,7 +340,10 @@ def _images_block(entry: dict) -> str:
         rows.append(line + "</p>")
     if not rows:
         return ""
-    return _section("图片", "".join(rows))
+    # 紧跟在汉字信息条下面，标题上边距小一点
+    head = (f'<p style="margin:10px 0 4px;color:{MUTED};font-size:{fs("label")};'
+            f'letter-spacing:1px;">图片</p>')
+    return head + "".join(rows)
 
 
 def entry_html(entry: dict, index, backlinks: list[dict], occurrences: list[dict] | None = None) -> str:
@@ -433,8 +436,10 @@ def entry_html(entry: dict, index, backlinks: list[dict], occurrences: list[dict
         f'</p>'
     )
 
-    main = (top + forms + _char_bar(entry) + f'<p style="margin:0;font-size:{fs("rule")};"></p>'
-            + senses + _images_block(entry) + phrases + etymology + actions)
+    # 图片放在部首笔画之下、释义等文字之上
+    main = (top + forms + _char_bar(entry) + _images_block(entry)
+            + f'<p style="margin:0;font-size:{fs("rule")};"></p>'
+            + senses + phrases + etymology + actions)
 
     # ---- 侧栏（无边框，只有小标题 + 细线）
     side: list[str] = []
