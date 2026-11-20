@@ -17,8 +17,9 @@ from PySide6.QtGui import (QAction, QColor, QFont, QFontMetrics, QIcon, QImage, 
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
     QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
-    QMainWindow, QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QSpinBox, QSplitter,
-    QStyledItemDelegate, QStyle, QTextBrowser, QToolButton, QVBoxLayout, QWidget,
+    QInputDialog, QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QPushButton, QScrollArea,
+    QSpinBox, QSplitter, QStyledItemDelegate, QStyle, QTextBrowser, QToolButton,
+    QVBoxLayout, QWidget,
 )
 
 import dictionary_model as dm
@@ -405,6 +406,60 @@ class EntryView(QTextBrowser):
             Qt.CursorShape.PointingHandCursor if href else Qt.CursorShape.IBeamCursor
         )
         super().mouseMoveEvent(event)
+
+    # ------------------------------------------------------------ 图片右键
+    def image_at(self, pos) -> str:
+        """判断点是否落在图片上，返回图片名字（拿不到名字就给空串）。"""
+        from PySide6.QtGui import QTextCursor
+
+        cur = self.cursorForPosition(pos)
+        for probe in (cur, QTextCursor(cur)):
+            fmt = probe.charFormat()
+            if fmt.isImageFormat():
+                return str(fmt.toImageFormat().name() or "image")
+        # 点在大图内部时，光标往往落在图片字符之后，往左再看一格
+        prev = QTextCursor(cur)
+        if prev.movePosition(QTextCursor.MoveOperation.PreviousCharacter):
+            if prev.charFormat().isImageFormat():
+                rect = self.cursorRect(prev)
+                if rect.left() - 40 <= pos.x() <= rect.right() + 800:
+                    return str(prev.charFormat().toImageFormat().name() or "image")
+        return ""
+
+    def contextMenuEvent(self, event):
+        pos = event.pos()
+        name = self.image_at(pos)
+        menu = QMenu(self)
+        if name:
+            title = menu.addAction("这张图片的大小")
+            title.setEnabled(False)
+        else:
+            title = menu.addAction("页面图片大小")
+            title.setEnabled(False)
+        menu.addSeparator()
+        for label, px in (("小  320", 320), ("中  420", 420), ("大  520", 520),
+                          ("特大  680", 680), ("原始尺寸", 0)):
+            act = menu.addAction(label)
+            act.setData(px)
+        menu.addSeparator()
+        custom = menu.addAction("自定义…")
+        custom.setData(-1)
+        menu.addSeparator()
+        copy_act = menu.addAction("复制")
+        copy_act.setData("copy")
+        all_act = menu.addAction("全选")
+        all_act.setData("all")
+
+        chosen = menu.exec(event.globalPos())
+        if chosen is None:
+            return
+        data = chosen.data()
+        if data == "copy":
+            self.copy()
+        elif data == "all":
+            self.selectAll()
+        else:
+            self.window().apply_image_menu(data)
 
 
 class BulkAddDialog(QDialog):
@@ -1758,6 +1813,19 @@ class DictWindow(QMainWindow):
         self.listw.doItemsLayout()
         self.listw.viewport().update()
 
+    def apply_image_menu(self, data):
+        """右键菜单回调：数字是宽度，-1 走自定义输入。"""
+        if data == -1:
+            cur = self._image_width or 420
+            val, ok_pressed = QInputDialog.getInt(
+                self, "自定义图片大小", "宽度（像素，0 = 原始尺寸）：",
+                cur, 0, 4000, 20)
+            if not ok_pressed:
+                return
+            self.set_image_width(val)
+        elif isinstance(data, int):
+            self.set_image_width(data)
+
     def set_image_width(self, px: int):
         """设置图片在页面里的显示宽度（0 = 原图）。"""
         self._image_width = max(0, int(px))
@@ -1873,7 +1941,23 @@ def print_data_info() -> int:
 
 
 if __name__ == "__main__":
-    if os.environ.get("DICT_DATA_INFO"):
-        sys.exit(print_data_info())
+    _probe = os.environ.get("DICT_DATA_INFO")
+    if _probe:
+        import io, contextlib
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            print_data_info()
+        text = buf.getvalue()
+        if _probe not in ("1", "true", "yes"):
+            try:
+                Path(_probe).write_text(text, encoding="utf-8")
+            except Exception as exc:
+                try:
+                    Path(str(_probe) + ".err").write_text(repr(exc), encoding="utf-8")
+                except Exception:
+                    pass
+        else:
+            sys.stdout.write(text)
+        sys.exit(0)
     sys.exit(main())
 
