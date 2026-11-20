@@ -184,13 +184,10 @@ rw.set_image_roots(_IMAGE_ROOTS)
 
 
 def verify_images() -> None:
-    """正文用 QTextDocument 实测一次；失败了就把图片搬到用户目录。"""
+    """确认能读到图片；包内文件读不了就复制到用户目录。"""
     global IMG_SOURCE
     if not _IMAGE_ROOTS:
         return
-    from PySide6.QtCore import QUrl
-    from PySide6.QtGui import QTextDocument
-
     sample = None
     for root in _IMAGE_ROOTS:
         for f in sorted(Path(root).glob("*.jpg"))[:1]:
@@ -198,33 +195,19 @@ def verify_images() -> None:
             break
         if sample:
             break
-    if not sample:
+    if sample is None:
+        IMG_SOURCE = "没有找到任何图片"
         return
 
-    url = rw.image_url(sample.name)
-    if not url:
-        return
-    doc = QTextDocument()
-    doc.setHtml(f'<img src="{url}">')
-    res = doc.resource(QTextDocument.ResourceType.ImageResource, QUrl(url))
-    if res is not None and not res.isNull():
-        return                      # 正常，什么都不做
+    from PySide6.QtGui import QImage
 
-    # 正文加载失败：把随包图片复制进用户目录再试
+    if not QImage(str(sample)).isNull():
+        return                       # 能读，保持原样
+
     if BUNDLE_DATA and (BUNDLE_DATA / "images").is_dir():
         n = _copy_bundle_images(BUNDLE_DATA / "images")
         rw.set_image_roots([IMAGES_DIR])
-        IMG_SOURCE = f"包内图无法显示，已复制 {n} 张到用户目录"
-        sample2 = next(iter(sorted(IMAGES_DIR.glob("*.jpg"))), None)
-        if sample2:
-            url2 = rw.image_url(sample2.name)
-            doc2 = QTextDocument()
-            doc2.setHtml(f'<img src="{url2}">')
-            res2 = doc2.resource(QTextDocument.ResourceType.ImageResource, QUrl(url2))
-            if res2 is not None and not res2.isNull():
-                IMG_SOURCE += "（已恢复）"
-            else:
-                IMG_SOURCE += "（仍失败，请用工具→图片诊断查看）"
+        IMG_SOURCE = f"包内图读不了，已复制 {n} 张到用户目录"
 
 
 def build_qss() -> str:
@@ -1254,7 +1237,7 @@ class DictWindow(QMainWindow):
             return
         pos = self.browser.verticalScrollBar().value()
         backs = [x for x in self.entries if x["id"] in (self.index.inbound.get(entry["id"]) or [])]
-        self.browser.setHtml(rw.entry_html(entry, self.index, backs, self._occurrences(entry)))
+        self._apply_entry_html(entry, rw.entry_html(entry, self.index, backs, self._occurrences(entry)))
         self.browser.verticalScrollBar().setValue(pos)
 
     def _occurrences(self, entry: dict) -> list[dict]:
@@ -1368,7 +1351,7 @@ class DictWindow(QMainWindow):
             self._push_history(eid)
         self.current_id = eid
         backs = [x for x in self.entries if x["id"] in (self.index.inbound.get(eid) or [])]
-        self.browser.setHtml(rw.entry_html(entry, self.index, backs, self._occurrences(entry)))
+        self._apply_entry_html(entry, rw.entry_html(entry, self.index, backs, self._occurrences(entry)))
         self.browser.verticalScrollBar().setValue(0)
         self._select_in_list(eid)
         self._update_nav()
@@ -1418,6 +1401,27 @@ class DictWindow(QMainWindow):
                 break
             self._hist_pos = nxt
         self._update_nav()
+
+    def _apply_entry_html(self, entry: dict, html: str):
+        """放入 HTML，并把用到的图片作为资源交给文档（不依赖 file://）。"""
+        from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QImage, QTextDocument
+
+        self.browser.setHtml(html)
+        names = [im.get("file", "") for im in entry.get("images") or []]
+        for sense in entry.get("senses") or []:
+            names += [im.get("file", "") for im in sense.get("images") or []]
+        doc = self.browser.document()
+        for name in names:
+            path = rw.image_path(name)
+            if path is None:
+                continue
+            img = QImage(str(path))
+            if img.isNull():
+                continue
+            doc.addResource(QTextDocument.ResourceType.ImageResource,
+                            QUrl(rw.image_src(name)), img)
+        doc.markContentsDirty(0, max(1, doc.characterCount()))
 
     def show_welcome(self):
         senses = sum(len(e.get("senses") or []) for e in self.entries)

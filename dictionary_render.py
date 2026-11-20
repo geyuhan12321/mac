@@ -14,6 +14,7 @@ from urllib.parse import quote
 IMAGE_ROOT = ""
 IMAGE_ROOTS: list[str] = []
 IMAGE_WIDTH = 520          # 页面里图片显示宽度（px），0 = 按原图
+EMBED_SCHEME = "dictimg"   # 正文图片用自定义 scheme，由程序喂像素
 
 INK = "#111111"       # 正文/词目
 GRAY = "#5f5f5f"      # 次级说明
@@ -130,18 +131,26 @@ def image_url(filename: str) -> str:
     return ""
 
 
-def image_url(filename: str) -> str:
-    """相对文件名 → file:// 绝对地址；已是绝对路径则原样转。"""
+def image_path(filename: str):
+    """在搜索目录里找这张图，返回 Path 或 None。"""
     f = str(filename or "").strip()
     if not f:
-        return ""
+        return None
     if os.path.isabs(f):
-        return Path(f).as_uri()
-    target = os.path.join(IMAGE_ROOT, f) if IMAGE_ROOT else f
-    try:
-        return Path(target).as_uri()
-    except ValueError:
+        return Path(f) if os.path.exists(f) else None
+    for root in (IMAGE_ROOTS or [""]):
+        cand = os.path.join(root, f) if root else f
+        if os.path.exists(cand):
+            return Path(cand)
+    return None
+
+
+def image_src(filename: str) -> str:
+    """正文里用的图片地址：自定义 scheme，配合 addResource 提供像素。"""
+    if image_path(filename) is None:
         return ""
+    from urllib.parse import quote
+    return f"{EMBED_SCHEME}://{quote(str(filename))}"
 
 
 def nl(html_text: str) -> str:
@@ -263,7 +272,7 @@ def _sense(sense: dict, idx: int, entry: dict, index) -> str:
                     f'用法 {nl(esc(sense["note"]))}</p>')
     bits.append(_meta(sense))
     for im in sense.get("images") or []:
-        url = image_url(im.get("file", ""))
+        url = image_src(im.get("file", ""))
         if not url:
             continue
         cap = im.get("caption") or ""
@@ -321,7 +330,7 @@ def _images_block(entry: dict) -> str:
         return ""
     rows = []
     for im in imgs:
-        url = image_url(im.get("file", ""))
+        url = image_src(im.get("file", ""))
         if not url:
             continue
         cap = im.get("caption") or ""
