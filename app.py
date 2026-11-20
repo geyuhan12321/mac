@@ -139,11 +139,92 @@ try:
 except OSError:
     pass
 
-# 图片：先找用户目录（新粘贴的），再找随包资源
-_IMAGE_ROOTS: list[Path] = [IMAGES_DIR]
+def _bundle_images_readable(folder: Path) -> bool:
+    """用 Qt 真读一张，确认包内图片能解码（macOS 上偶尔读不到）。"""
+    try:
+        from PySide6.QtGui import QImage
+    except Exception:
+        return False
+    for f in sorted(folder.glob("*.jpg"))[:1]:
+        img = QImage(str(f))
+        if not img.isNull():
+            return True
+    return False
+
+
+def _copy_bundle_images(folder: Path) -> int:
+    """把随包图片复制到用户目录，返回复制数量。"""
+    n = 0
+    for f in folder.glob("*.jpg"):
+        target = IMAGES_DIR / f.name
+        if target.exists():
+            continue
+        try:
+            shutil.copy2(f, target)
+            n += 1
+        except OSError:
+            pass
+    return n
+
+
+# 图片：先找用户目录（新粘贴的），再找随包资源；
+# 包里那张读不出来时，把图片搬到用户目录，保证能显示
+_IMAGE_ROOTS: list[Path] = [IMAGES_DIR]  # 去重后使用
+IMG_SOURCE = "用户目录"
 if BUNDLE_DATA and (BUNDLE_DATA / "images").is_dir():
-    _IMAGE_ROOTS.append(BUNDLE_DATA / "images")
+    _bundle = BUNDLE_DATA / "images"
+    if _bundle_images_readable(_bundle):
+        if _bundle.resolve() != IMAGES_DIR.resolve():
+            _IMAGE_ROOTS.append(_bundle)
+        IMG_SOURCE = "随包资源"
+    else:
+        _copied = _copy_bundle_images(_bundle)
+        IMG_SOURCE = f"已从包内复制 {_copied} 张到用户目录"
 rw.set_image_roots(_IMAGE_ROOTS)
+
+
+def verify_images() -> None:
+    """正文用 QTextDocument 实测一次；失败了就把图片搬到用户目录。"""
+    global IMG_SOURCE
+    if not _IMAGE_ROOTS:
+        return
+    from PySide6.QtCore import QUrl
+    from PySide6.QtGui import QTextDocument
+
+    sample = None
+    for root in _IMAGE_ROOTS:
+        for f in sorted(Path(root).glob("*.jpg"))[:1]:
+            sample = f
+            break
+        if sample:
+            break
+    if not sample:
+        return
+
+    url = rw.image_url(sample.name)
+    if not url:
+        return
+    doc = QTextDocument()
+    doc.setHtml(f'<img src="{url}">')
+    res = doc.resource(QTextDocument.ResourceType.ImageResource, QUrl(url))
+    if res is not None and not res.isNull():
+        return                      # 正常，什么都不做
+
+    # 正文加载失败：把随包图片复制进用户目录再试
+    if BUNDLE_DATA and (BUNDLE_DATA / "images").is_dir():
+        n = _copy_bundle_images(BUNDLE_DATA / "images")
+        rw.set_image_roots([IMAGES_DIR])
+        IMG_SOURCE = f"包内图无法显示，已复制 {n} 张到用户目录"
+        sample2 = next(iter(sorted(IMAGES_DIR.glob("*.jpg"))), None)
+        if sample2:
+            url2 = rw.image_url(sample2.name)
+            doc2 = QTextDocument()
+            doc2.setHtml(f'<img src="{url2}">')
+            res2 = doc2.resource(QTextDocument.ResourceType.ImageResource, QUrl(url2))
+            if res2 is not None and not res2.isNull():
+                IMG_SOURCE += "（已恢复）"
+            else:
+                IMG_SOURCE += "（仍失败，请用工具→图片诊断查看）"
 
 
 def build_qss() -> str:
@@ -943,6 +1024,8 @@ class DictWindow(QMainWindow):
         self._silent = False
         self._font_delta = self._load_font_delta()
         rw.set_font_delta(self._font_delta)
+        self._image_width = self._load_setting("image_width", 420)
+        rw.set_image_width(self._image_width)
 
         self._history: list[str] = []   # 浏览过的词条 id
         self._hist_pos: int = -1        # 当前所处位置
@@ -1115,8 +1198,16 @@ class DictWindow(QMainWindow):
         self.strict_action.toggled.connect(self.toggle_strict)
         m_view.addAction(self.strict_action)
 
+        m_img = m_view.addMenu("图片大小")
+        for label, px in (("小 320", 320), ("中 420", 420), ("大 520", 520),
+                          ("特大 680", 680), ("原始尺寸", 0)):
+            act = QAction(label, self)
+            act.triggered.connect(lambda checked=False, v=px: self.set_image_width(v))
+            m_img.addAction(act)
+
         m_tool = bar.addMenu("工具(&T)")
         # 批量加字已在「词条」菜单里（Ctrl+B），这里不重复注册，否则快捷键会冲突
+        self._action(m_tool, "图片诊断", self.show_image_info)
         self._action(m_tool, "从例句自动收词（把句子里出现过的汉字都收进库）",
                      self.auto_collect_chars)
 
@@ -1558,6 +1649,53 @@ class DictWindow(QMainWindow):
         Path(path).write_text(dm.entries_to_csv(self.entries), encoding="utf-8-sig")
         self.statusBar().showMessage(f"已导出 CSV 到 {path}", 4000)
 
+    def show_image_info(self):
+        """图片诊断：哪里找、读不读得出来、支持哪些格式。"""
+        from PySide6.QtGui import QImage, QImageReader
+
+        lines = [f"图片来源：{IMG_SOURCE}", ""]
+        lines.append("搜索目录：")
+        for i, root in enumerate(rw.IMAGE_ROOTS, 1):
+            files = list(Path(root).glob("*.jpg")) if Path(root).is_dir() else []
+            lines.append(f"  {i}. {root}")
+            lines.append(f"     图片 {len(files)} 张")
+
+        sample = None
+        for root in rw.IMAGE_ROOTS:
+            for f in sorted(Path(root).glob("*.jpg"))[:1]:
+                sample = f
+                break
+            if sample:
+                break
+        if sample:
+            url = rw.image_url(sample.name)
+            img = QImage(str(sample))
+            lines += [
+                "",
+                f"抽样文件：{sample.name}",
+                f"解析地址：{url or '（空）'}",
+                f"文件大小：{sample.stat().st_size // 1024} KB",
+                f"解码结果：{'成功 ' + str(img.width()) + '×' + str(img.height()) if not img.isNull() else '失败'}",
+            ]
+        else:
+            lines.append("\n没找到任何 jpg 图片")
+
+        # 关键一步：模拟正文里 <img src="file://..."> 能否真的加载
+        if sample:
+            from PySide6.QtCore import QUrl
+            from PySide6.QtGui import QTextDocument
+            doc = QTextDocument()
+            doc.setHtml(f'<img src=""{rw.image_url(sample.name)}"">')
+            res = doc.resource(QTextDocument.ResourceType.ImageResource, QUrl(rw.image_url(sample.name)))
+            if res is not None and not res.isNull():
+                lines.append(f"页面加载测试：成功 {res.width()}×{res.height()}")
+            else:
+                lines.append("页面加载测试：失败（正文拿不到这张图）")
+
+        fmts = [bytes(x).decode() for x in QImageReader.supportedImageFormats()]
+        lines += ["", "Qt 支持的图片格式：" + "、".join(sorted(fmts))]
+        QMessageBox.information(self, "图片诊断", "\n".join(lines))
+
     def show_data_info(self):
         """摊开数据位置与条数，便于核对包装得对不对。"""
         def count_jpg(d: Path) -> int:
@@ -1616,16 +1754,42 @@ class DictWindow(QMainWindow):
         self.listw.doItemsLayout()
         self.listw.viewport().update()
 
+    def set_image_width(self, px: int):
+        """设置图片在页面里的显示宽度（0 = 原图）。"""
+        self._image_width = max(0, int(px))
+        rw.set_image_width(self._image_width)
+        self._save_setting("image_width", self._image_width)
+        self._rerender() if self.current_id else self.show_welcome()
+        self.statusBar().showMessage(
+            f"图片宽度 {'原始' if self._image_width == 0 else str(self._image_width) + 'px'}", 3000)
+
     def reset_zoom(self):
         """回到默认字号。"""
         self.set_font_delta(0)
 
-    def _save_font_delta(self):
+    def _settings_path(self) -> pathlib.Path:
+        return WORDS_PATH.parent / "settings.json"
+
+    def _load_settings_file(self) -> dict:
         try:
-            cfg = WORDS_PATH.parent / "settings.json"
-            cfg.write_text(json.dumps({"font_delta": self._font_delta}), encoding="utf-8")
+            return json.loads(self._settings_path().read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+
+    def _load_setting(self, key: str, default):
+        val = self._load_settings_file().get(key, default)
+        return val if isinstance(val, type(default)) or val == 0 else default
+
+    def _save_setting(self, key: str, value):
+        cfg = self._load_settings_file()
+        cfg[key] = value
+        try:
+            self._settings_path().write_text(json.dumps(cfg, ensure_ascii=False), encoding="utf-8")
         except OSError:
             pass
+
+    def _save_font_delta(self):
+        self._save_setting("font_delta", self._font_delta)
 
     def _load_font_delta(self) -> float:
         try:
@@ -1675,6 +1839,7 @@ def main() -> int:
     app.setStyle("Fusion")
     app.setFont(QFont("Microsoft YaHei UI", 10))
     app.setStyleSheet(QSS)
+    verify_images()               # 实测一次正文能否显示图片，不行就换目录
     win = DictWindow()
     win.show()
     return app.exec()

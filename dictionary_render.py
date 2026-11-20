@@ -13,6 +13,7 @@ from urllib.parse import quote
 # 图片根目录，由 app.py 启动时设置（data/images）
 IMAGE_ROOT = ""
 IMAGE_ROOTS: list[str] = []
+IMAGE_WIDTH = 520          # 页面里图片显示宽度（px），0 = 按原图
 
 INK = "#111111"       # 正文/词目
 GRAY = "#5f5f5f"      # 次级说明
@@ -85,6 +86,24 @@ SANS = "'Microsoft YaHei UI','Microsoft YaHei',Segoe UI,sans-serif"
 def set_image_root(path) -> None:
     """兼容旧调用：设置单一图片目录。"""
     set_image_roots([path])
+
+
+def set_image_width(px: int) -> None:
+    """设置图片显示宽度；0 表示按图片原始尺寸。"""
+    global IMAGE_WIDTH
+    IMAGE_WIDTH = max(0, int(px))
+
+
+def get_image_width() -> int:
+    return IMAGE_WIDTH
+
+
+def _img_tag(url: str) -> str:
+    """按当前设置生成 img 标签。"""
+    w = IMAGE_WIDTH
+    if w > 0:
+        return f'<img src="{attr(url)}" width="{w}">'
+    return f'<img src="{attr(url)}">'
 
 
 def set_image_roots(paths) -> None:
@@ -249,7 +268,7 @@ def _sense(sense: dict, idx: int, entry: dict, index) -> str:
             continue
         cap = im.get("caption") or ""
         bits.append(
-            f'<p style="margin:6px 0 10px;"><img src="{attr(url)}" width="520">'
+            f'<p style="margin:6px 0 10px;">{_img_tag(url)}'
             + (f'<br><span style="color:{MUTED};font-size:{fs("label")};">{esc(cap)}</span>' if cap else "")
             + "</p>"
         )
@@ -306,7 +325,7 @@ def _images_block(entry: dict) -> str:
         if not url:
             continue
         cap = im.get("caption") or ""
-        line = f'<p style="margin:0 0 10px;"><img src="{attr(url)}" width="520">'
+        line = f'<p style="margin:0 0 10px;">{_img_tag(url)}'
         if cap:
             line += f'<br><span style="color:{MUTED};font-size:{fs("label")};">{esc(cap)}</span>'
         rows.append(line + "</p>")
