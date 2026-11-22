@@ -259,6 +259,15 @@ def build_qss() -> str:
 QWidget {{ background: #ffffff; color: #111111; font-size: {ui:.1f}px; }}
 #Header {{ background: #ffffff; border-bottom: 1px solid #e6e6e6; }}
 #Count {{ background: transparent; }}
+QComboBox#ModeBox {{
+    border: 1px solid #e0e0e0; border-radius: 3px; padding: 2px 8px;
+    background: #ffffff; color: #444444; font-size: {small:.0f}px;
+    min-width: 62px;
+}}
+QComboBox#ModeBox::drop-down {{ border: none; width: 14px; }}
+QComboBox#ModeBox QAbstractItemView {{
+    background: #ffffff; border: 1px solid #e0e0e0; selection-background-color: #f0f0f0;
+}}
 QLineEdit#Search {{
     background: #ffffff; border: 1px solid #dcdcdc; border-radius: 4px;
     padding: 6px 10px; color: #111111;
@@ -1148,11 +1157,18 @@ class DictWindow(QMainWindow):
 
         self.search = QLineEdit()
         self.search.setObjectName("Search")
-        self.search.setPlaceholderText("搜索词条 / 拼音 / 释义")
+        self.search.setPlaceholderText("搜字 / 拼音（精确）")
         self.search.setClearButtonEnabled(True)
         self.search.setMinimumWidth(280)
         self.search.textChanged.connect(self.refresh_list)
         self.search.returnPressed.connect(self._open_first)
+
+        self.search_mode = QComboBox()
+        self.search_mode.addItem("精确", "exact")
+        self.search_mode.addItem("模糊", "fuzzy")
+        self.search_mode.setObjectName("ModeBox")
+        self.search_mode.currentIndexChanged.connect(self._on_search_mode)
+        self.search_mode.setToolTip("精确：只匹配字本身、拼音、繁体；模糊：连释义例句一起搜")
 
         btn_import = QPushButton("导入")
         btn_import.setObjectName("Top")
@@ -1162,10 +1178,15 @@ class DictWindow(QMainWindow):
         btn_new.clicked.connect(lambda: self.new_entry())
 
         self.search.setMaximumWidth(560)
+        _saved_mode = self._load_setting("search_mode", "exact")
+        _idx = self.search_mode.findData(_saved_mode)
+        if _idx >= 0:
+            self.search_mode.setCurrentIndex(_idx)
         h.addWidget(self.btn_back)
         h.addWidget(self.btn_forward)
         h.addSpacing(6)
         h.addWidget(self.search)
+        h.addWidget(self.search_mode)
         h.addStretch(1)
         h.addWidget(btn_import)
         h.addWidget(btn_new)
@@ -1346,6 +1367,30 @@ class DictWindow(QMainWindow):
                             src.add(e["id"])
         return hits, len(src)
 
+    def _on_search_mode(self):
+        mode = self.search_mode.currentData()
+        self.search.setPlaceholderText(
+            "搜字 / 拼音（精确）" if mode == "exact" else "搜字 / 拼音 / 释义（模糊）")
+        self._save_setting("search_mode", mode)
+        self.refresh_list()
+        n = self.listw.count()
+        self.statusBar().showMessage(
+            f"{'精确' if mode == 'exact' else '模糊'}搜索：{n} 条", 3000)
+
+    def _exact_match(self, e: dict, q: str) -> int:
+        """精确匹配：0 完全等于字 / 1 等于繁体 / 2 拼音相同；-1 不匹配。"""
+        head = e["headword"]
+        if head == q:
+            return 0
+        trad = (e.get("character") or {}).get("traditional") or ""
+        if trad and q in trad:
+            return 1
+        py = (e.get("pronunciation") or {}).get("pinyin", "")
+        for piece in py.replace(",", " ").replace("/", " ").split():
+            if piece and (_strip_tone(piece) == _strip_tone(q) or piece.lower() == q.lower()):
+                return 2
+        return -1
+
     def filtered(self) -> list[dict]:
         q = self.search.text().strip().lower()
         lang = self.lang_filter.currentText()
@@ -1354,6 +1399,10 @@ class DictWindow(QMainWindow):
             if lang == "中文" and e.get("lang") != "zh":
                 continue
             if lang == "英文" and e.get("lang") != "en":
+                continue
+            if q and self.search_mode.currentData() == "exact":
+                if self._exact_match(e, q) >= 0:
+                    out.append(e)
                 continue
             if q:
                 py = (e.get("pronunciation") or {}).get("pinyin", "")
@@ -1370,6 +1419,10 @@ class DictWindow(QMainWindow):
                 if q not in hay:
                     continue
             out.append(e)
+        if q and self.search_mode.currentData() == "exact":
+            out.sort(key=lambda e: (self._exact_match(e, q), e["headword"]))
+            return out
+
         if q:
             ql = q.lower()
 
@@ -1386,6 +1439,18 @@ class DictWindow(QMainWindow):
             out.sort(key=rank)
         return out
 
+    def _search_hint(self):
+        q = self.search.text().strip()
+        if not q:
+            return
+        n = self.listw.count()
+        if n == 0:
+            if self.search_mode.currentData() == "exact":
+                self.statusBar().showMessage(
+                    f"「{q}」没有完全匹配；点右边「模糊」可连同释义一起搜", 6000)
+            else:
+                self.statusBar().showMessage(f"「{q}」没有结果", 4000)
+
     def refresh_list(self):
         self.listw.blockSignals(True)
         self.listw.clear()
@@ -1400,6 +1465,7 @@ class DictWindow(QMainWindow):
             self.listw.addItem(item)
         self.listw.blockSignals(False)
         self.count_label.setText(f"{len(rows)} 条")
+        self._search_hint()
 
     @staticmethod
     def _item_parts(e: dict):
