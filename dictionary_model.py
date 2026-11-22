@@ -234,6 +234,11 @@ def normalize_entry(raw: Any) -> dict | None:
         "phrases": _phrases(raw.get("phrases") or raw.get("短语")),
         "etymology": _s(raw.get("etymology") or raw.get("词源")),
         "images": _images(raw.get("images") or raw.get("图片")),
+        "relations": {
+            k: _list(v)
+            for k, v in (raw.get("relations") or {}).items()
+            if k in ("homophones", "near", "same_radical", "contains")
+        } if isinstance(raw.get("relations"), dict) else {},
         "tags": _list(raw.get("tags") or raw.get("分类")),
         "source": _s(raw.get("source") or raw.get("来源")),
         "updatedAt": _s(raw.get("updatedAt")) or time.strftime("%Y-%m-%dT%H:%M:%S"),

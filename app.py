@@ -625,6 +625,14 @@ class EntryEditor(QDialog):
         self.dup_hint.setVisible(False)
         head_box.addWidget(self.dup_hint)
         head_row.addLayout(head_box, 1)
+
+        self.btn_main_img = QToolButton()
+        self.btn_main_img.setObjectName("MainImg")
+        self.btn_main_img.setFixedSize(58, 58)
+        self.btn_main_img.setToolTip("点这里选甲骨文 / 主图")
+        self.btn_main_img.clicked.connect(self._pick_main_image)
+        head_row.addWidget(self.btn_main_img)
+        head_row.addSpacing(8)
         head_row.addWidget(self.lang_hint)
         self.form.addLayout(head_row)
 
@@ -664,8 +672,19 @@ class EntryEditor(QDialog):
             v.addWidget(self._cap(cap))
             v.addWidget(w)
             char_row.addWidget(self._wrap(cell))
-        self.form.addSpacing(10)
-        self.form.addWidget(self.char_row_widget)
+        # 部首/笔画/繁体 不再显示（数据仍保留并原样写回）
+        self.char_row_widget.setVisible(False)
+
+        # 其余图片（主图之外的）
+        self.form.addWidget(self._section("其他图片"))
+        self.extra_bar = QHBoxLayout()
+        self.extra_bar.setSpacing(6)
+        btn_more = QPushButton("＋ 添加")
+        btn_more.setObjectName("EditorGhost")
+        btn_more.clicked.connect(self._add_extra_image)
+        self.extra_bar.addWidget(btn_more)
+        self.extra_bar.addStretch(1)
+        self.form.addLayout(self.extra_bar)
 
         # 义项
         self.form.addSpacing(8)
@@ -688,6 +707,21 @@ class EntryEditor(QDialog):
                                     "|".join(f'{x.get("phrase")}—{x.get("meaning")}'
                                              for x in (entry or {}).get("phrases") or []))
         self.form.addWidget(self._wrap(self.f_phrases))
+
+        self.form.addWidget(self._section("右侧栏关联字"))
+        hint = QLabel("按词条字自动识别，可改：用空格、逗号或、分隔；留空表示不显示该栏")
+        hint.setObjectName("EditorHint")
+        hint.setWordWrap(True)
+        self.form.addWidget(hint)
+
+        self.f_rel = {}
+        for key, cap in (("homophones", "同音"), ("near", "近音"),
+                         ("same_radical", "同部首"), ("contains", "含此字")):
+            self.form.addWidget(self._cap(cap))
+            box = self._area("自动识别的字，可增删", "", 40)
+            self.f_rel[key] = box
+            box.textChanged.connect(lambda b=box: setattr(b, "_touched", True))
+            self.form.addWidget(box)
 
         self.form.addWidget(self._section("词源"))
         self.f_etym = self._area("如：形声字，从足包声（可换行）", (entry or {}).get("etymology", ""), 52)
@@ -753,6 +787,22 @@ class EntryEditor(QDialog):
         if not senses_val:
             self._add_sense({})
 
+        if entry:
+            self._images.extend(dict(x) for x in (entry.get("images") or []))
+        self._refresh_main_image()
+        self._refresh_extra_images()
+
+        custom = (entry or {}).get("relations") or {}
+        if custom:
+            for key, box in self.f_rel.items():
+                box.blockSignals(True)
+                box.setPlainText(" ".join(custom.get(key) or []))
+                box._touched = True
+                box.blockSignals(False)
+        else:
+            self._fill_relations(force=True)
+
+        self.f_head.textChanged.connect(lambda _: self._fill_relations())
         self._sync_lang()
         self._sync_freq()
         self._sync_forms()
@@ -814,6 +864,123 @@ class EntryEditor(QDialog):
         if 0 <= idx < len(field._img_list):
             field._img_list.pop(idx)
             self._refresh_field_thumbs(field)
+
+    # ---------------------------------------------------------------- 图片（主图 / 其余）
+    def _entry_images(self) -> list[dict]:
+        """主图在前、其余在后；统一存在 self._images。"""
+        return self._images
+
+    def _refresh_main_image(self):
+        imgs = self._images
+        btn = self.btn_main_img
+        if imgs:
+            pix = QPixmap(str(IMAGES_DIR / imgs[0]["file"]))
+            if not pix.isNull():
+                btn.setIcon(QIcon(pix))
+                btn.setIconSize(QSize(52, 52))
+            btn.setText("")
+        else:
+            btn.setIcon(QIcon())
+            btn.setText("＋图")
+
+    def _refresh_extra_images(self):
+        while self.extra_bar.count() > 2:          # 保留「添加」和弹簧
+            it = self.extra_bar.takeAt(1)
+            w = it.widget()
+            if w:
+                w.deleteLater()
+        for i, im in enumerate(self._images[1:], 1):
+            btn = QToolButton()
+            btn.setObjectName("Thumb")
+            btn.setToolTip("点击删除这张图")
+            pix = QPixmap(str(IMAGES_DIR / im["file"]))
+            if not pix.isNull():
+                btn.setIcon(QIcon(pix))
+                btn.setIconSize(QSize(46, 46))
+            btn.setFixedSize(52, 52)
+            btn.clicked.connect(lambda _=False, idx=i: self._drop_image(idx))
+            self.extra_bar.insertWidget(self.extra_bar.count() - 1, btn)
+
+    def _drop_image(self, idx: int):
+        if 0 <= idx < len(self._images):
+            self._images.pop(idx)
+            self._refresh_main_image()
+            self._refresh_extra_images()
+
+    def _pick_main_image(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "选甲骨文 / 主图", str(pathlib.Path.home()),
+            "图片 (*.png *.jpg *.jpeg *.webp *.bmp)")
+        if not path:
+            return
+        name = self._save_pixmap(QPixmap(path))
+        if not name:
+            return
+        if self._images:
+            self._images[0] = {"file": name, "caption": ""}
+        else:
+            self._images.insert(0, {"file": name, "caption": ""})
+        self._refresh_main_image()
+        self._refresh_extra_images()
+
+    def _add_extra_image(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "添加图片", str(pathlib.Path.home()),
+            "图片 (*.png *.jpg *.jpeg *.webp *.bmp)")
+        if not path:
+            return
+        name = self._save_pixmap(QPixmap(path))
+        if not name:
+            return
+        self._images.append({"file": name, "caption": ""})
+        if len(self._images) == 1:
+            self._refresh_main_image()
+        self._refresh_extra_images()
+
+    # ---------------------------------------------------------------- 关联字
+    def _auto_relations(self) -> dict:
+        """按当前词条名，让主窗口算一遍同音/近音/同部首/含此字。"""
+        head = self.f_head.text().strip()
+        parent = self.parent()
+        empty = {k: [] for k in ("homophones", "near", "same_radical", "contains")}
+        if not head or not hasattr(parent, "relations_for"):
+            return empty
+        # 新词条还没拼音部首，用词库里同名字的条目做参考
+        base = None
+        for e in getattr(parent, "entries", []):
+            if e.get("headword") == head:
+                base = dict(e)
+                break
+        probe = base or dict(self.entry or {})
+        probe["headword"] = head
+        probe["id"] = probe.get("id") or f"probe-{head}"
+        probe.pop("relations", None)
+        try:
+            rel = parent.relations_for(probe)
+        except Exception:
+            return empty
+        return {k: [o["headword"] for o in rel.get(k, [])] for k in empty}
+
+    def _fill_relations(self, force: bool = False):
+        auto = self._auto_relations()
+        for key, box in self.f_rel.items():
+            if not force and getattr(box, "_touched", False):
+                continue
+            box.blockSignals(True)
+            box.setPlainText(" ".join(auto.get(key, [])))
+            box._touched = False
+            box.blockSignals(False)
+
+    def _collect_relations(self) -> dict:
+        """只保存用户动过的栏，没动过的交给自动识别。"""
+        out = {}
+        for key, box in self.f_rel.items():
+            if not getattr(box, "_touched", False):
+                continue
+            text = (box.toPlainText().replace("、", " ").replace("，", " ")
+                    .replace(",", " ").replace("/", " "))
+            out[key] = [x for x in text.split() if x]
+        return out
 
     def _wrap(self, field) -> QWidget:
         """输入框 + 下方缩略图行，作为一个整体放进布局。"""
@@ -1052,6 +1219,7 @@ class EntryEditor(QDialog):
             "phrases": phrases,
             "etymology": self.f_etym.toPlainText().rstrip(),
             "images": entry_imgs,
+            "relations": self._collect_relations(),
             "tags": [t.strip() for t in self.f_tags.text().replace(",", "、").split("、") if t.strip()],
         }
         if zh:
@@ -1527,10 +1695,27 @@ class DictWindow(QMainWindow):
                     self._uses_radical.setdefault(rad, []).append(e)
 
     def relations_for(self, entry: dict) -> dict:
-        """同音 / 近音 / 同部首 / 含此字。"""
+        """同音 / 近音 / 同部首 / 含此字；词条里存了自定义就用自定义。"""
         if not hasattr(self, "_by_sound"):
             self._build_relations()
 
+        custom = entry.get("relations") or {}
+        if custom:
+            by_head = getattr(self, "_by_head", None)
+            if by_head is None:
+                self._by_head = {e["headword"]: e for e in self.entries}
+                by_head = self._by_head
+            auto = self._auto_relations_for(entry)
+            return {
+                k: ([by_head[n] for n in custom[k] if n in by_head]
+                    if k in custom else auto.get(k, []))
+                for k in ("homophones", "near", "same_radical", "contains")
+            }
+
+        return self._auto_relations_for(entry)
+
+    def _auto_relations_for(self, entry: dict) -> dict:
+        """纯自动计算：同音 / 近音 / 同部首 / 含此字。"""
         keys = pinyin_keys(entry)
         bases = {k[0] for k in keys}
         head = entry["headword"]
