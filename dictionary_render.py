@@ -320,6 +320,19 @@ def _section(title: str, body: str) -> str:
             f'{title}</p>{body}')
 
 
+def _head_image(entry: dict, hw_pt: float) -> str:
+    """第一张图（甲骨文）跟在字右边，高度约等于字高。"""
+    imgs = entry.get("images") or []
+    if not imgs:
+        return ""
+    url = image_src(imgs[0].get("file", ""))
+    if not url:
+        return ""
+    px = max(28, int(hw_pt * 1.333 * 1.15))     # pt → px，再略放大一点
+    return (f'&nbsp;&nbsp;<img src="{attr(url)}" height="{px}" '
+            f'style="vertical-align:middle;">')
+
+
 def _main_image(entry: dict) -> str:
     """词条处显示的第一张图（甲骨文/字源）。"""
     imgs = entry.get("images") or []
@@ -385,6 +398,7 @@ def entry_html(entry: dict, index, backlinks: list[dict], occurrences: list[dict
     homo = entry.get("homograph")
 
     # ---- 词目（标题过长时自动缩小，避免撑出版面）
+    hw_pt = pt("hw")
     hw_len = len(entry["headword"])
     if hw_len <= 3:
         hw_size = fs("hw")
@@ -400,6 +414,7 @@ def entry_html(entry: dict, index, backlinks: list[dict], occurrences: list[dict
         f'<span style="font-family:{SERIF};font-size:{hw_size};font-weight:bold;color:{INK};">'
         f'{esc(entry["headword"])}</span>'
         + (f'<span style="font-size:{fs('val')};color:{MUTED};">&nbsp;{sup(homo)}</span>' if homo else "")
+        + _head_image(entry, hw_pt)
         + '</td><td align="right" valign="top">'
         f'<span style="color:{MUTED};font-size:{fs('label')};letter-spacing:1px;">'
         f'{"中文" if entry.get("lang") == "zh" else "ENGLISH"}</span></td></tr></table>'
@@ -421,7 +436,7 @@ def entry_html(entry: dict, index, backlinks: list[dict], occurrences: list[dict
         if sub else ""
     )
 
-    top = (head + subline + _main_image(entry) + _image_row(entry)
+    top = (head + subline + _image_row(entry)
            + '<p style="margin:6px 0 0;"></p>' + rule("100%", "#cfcfcf"))
 
     # 词形变化按要求不再显示（数据保留在 JSON 里）
