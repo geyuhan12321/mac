@@ -1362,6 +1362,7 @@ class DictWindow(QMainWindow):
                     py,
                     _strip_tone(py),          # ai 也能搜到 ài
                     (e.get("pronunciation") or {}).get("uk", ""),
+                    (e.get("character") or {}).get("traditional", ""),   # 繁体也能搜
                     " ".join(e.get("tags") or []),
                 ] + [s.get("definition", "") + " " + s.get("definitionZh", "")
                      + " " + " ".join(x.get("text", "") for x in s.get("examples") or [])

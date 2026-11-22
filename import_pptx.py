@@ -92,7 +92,15 @@ def main() -> int:
             stats["skip_multi"] += 1
             continue
         if head in seen:
+            # 同字多页：把后续页内容并进已有词条，别丢内容
             stats["dup"] += 1
+            prev = next((e for e in entries if e["headword"] == head), None)
+            if prev is not None:
+                old_lines = set(prev["senses"][0]["definition"].splitlines())
+                extra = [ln for ln in lines[1:] if ln not in old_lines]
+                if extra:
+                    prev["senses"][0]["definition"] = (
+                        prev["senses"][0]["definition"].rstrip() + "\n" + "\n".join(extra))
             continue
         seen.add(head)
         stats["single"] += 1

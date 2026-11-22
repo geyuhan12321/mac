@@ -213,7 +213,9 @@ jobs:
           BIN="dist/$APP_NAME.app/Contents/MacOS/$APP_NAME"
           DICT_DATA_INFO=1 "$BIN" | tee /tmp/probe.txt
           grep -q "FROZEN True" /tmp/probe.txt || { echo "不是打包模式"; exit 1; }
-          grep -q "COUNT 4425" /tmp/probe.txt || { echo "词条数不对"; exit 1; }
+          EXPECT=$(python3 -c "import json;print(len(json.load(open('data/words.json'))))")
+          echo "期望 $EXPECT 条"
+          grep -q "COUNT $EXPECT" /tmp/probe.txt || { echo "词条数与词库不一致"; exit 1; }
           grep -q "IMG_OK True" /tmp/probe.txt || { echo "图片解析失败"; exit 1; }
           echo "打包版数据自检通过"
 
