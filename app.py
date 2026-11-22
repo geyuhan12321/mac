@@ -39,6 +39,39 @@ def _strip_tone(text: str) -> str:
     return (text or "").translate(_TONE_MAP).lower()
 
 
+_TONE_INDEX = {ch: i for i, ch in enumerate("āáǎà")}
+_TONE_MAP_ALL = {
+    "ā": ("a", 1), "á": ("a", 2), "ǎ": ("a", 3), "à": ("a", 4),
+    "ē": ("e", 1), "é": ("e", 2), "ě": ("e", 3), "è": ("e", 4),
+    "ī": ("i", 1), "í": ("i", 2), "ǐ": ("i", 3), "ì": ("i", 4),
+    "ō": ("o", 1), "ó": ("o", 2), "ǒ": ("o", 3), "ò": ("o", 4),
+    "ū": ("u", 1), "ú": ("u", 2), "ǔ": ("u", 3), "ù": ("u", 4),
+    "ǖ": ("v", 1), "ǘ": ("v", 2), "ǚ": ("v", 3), "ǜ": ("v", 4),
+    "ü": ("v", 0), "ń": ("n", 2), "ň": ("n", 3), "ḿ": ("m", 2),
+}
+
+
+def pinyin_keys(entry: dict) -> set[tuple[str, int]]:
+    """把 "ā / á" 拆成 {("a",1),("a",2)}，声调为 0 表示轻声。"""
+    raw = (entry.get("pronunciation") or {}).get("pinyin", "") or ""
+    out: set[tuple[str, int]] = set()
+    for piece in raw.replace(",", " ").split():
+        if piece in ("/", "、", "|"):
+            continue
+        base_chars = []
+        tone = 0
+        for ch in piece.strip().strip("/"):
+            if ch in _TONE_MAP_ALL:
+                b, t = _TONE_MAP_ALL[ch]
+                base_chars.append(b)
+                tone = t
+            elif ch.isalpha():
+                base_chars.append(ch.lower())
+        if base_chars:
+            out.add(("".join(base_chars), tone))
+    return out
+
+
 def dm_factor(delta: float) -> float:
     """把增量夹到 -4 ~ +10 之间，并按 0.5 对齐。"""
     d = max(-4.0, min(10.0, float(delta)))
@@ -611,11 +644,7 @@ class EntryEditor(QDialog):
         self.form.addSpacing(6)
         self.form.addWidget(self._rule())
 
-        # 词形
-        self.form.addWidget(self._cap("词形变化（可选，逗号分隔）"))
-        self.f_forms = self._line("runs, running, ran",
-                                  "，".join(f.get("value", "") for f in (entry or {}).get("wordForms") or []))
-        self.form.addWidget(self._wrap(self.f_forms))
+        # 词形变化不再提供输入（数据保留在 JSON 里）
 
         # 汉字信息（三格，与词条页同样的浅框）
         self.char_row_widget = QWidget()
@@ -685,7 +714,6 @@ class EntryEditor(QDialog):
         self.forms_hint.setObjectName("EditorHint")
         self.forms_hint.setWordWrap(True)
         self.side.addWidget(self.forms_hint)
-        self.f_forms.textChanged.connect(self._sync_forms)
 
         self.side.addWidget(self._section("分类"))
         self.f_tags = self._line("动作、常用（用、或, 分隔）",
@@ -880,8 +908,7 @@ class EntryEditor(QDialog):
         self.freq_dots.setText(dots)
 
     def _sync_forms(self):
-        vals = [v.strip() for v in self.f_forms.text().replace("，", ",").split(",") if v.strip()]
-        self.forms_hint.setText("\n".join(vals) if vals else "（在左侧填写）")
+        """词形变化已不显示，保留空实现。"""
 
     # ---------------------------------------------------------------- 义项
     def _add_sense(self, data: dict | None = None):
@@ -900,18 +927,18 @@ class EntryEditor(QDialog):
         col.setSpacing(1)
         f_pos = self._line("动词 / VERB", data.get("pos", ""), "SenseTag")
         f_def = self._area("柯林斯式整句释义最佳", data.get("definition", ""), 62)
-        f_zh = self._area("可选，可换行", data.get("definitionZh", ""), 52)
+
         ex = (data.get("examples") or [{}])[0]
         f_ex = self._area("可选；写进去以后句中的词也能点", ex.get("text", ""), 54)
-        f_extr = self._area("可选，可换行", ex.get("translation", ""), 46)
+
         f_meta = self._area(
             "每行一项，也可用 | 分隔",
             "\n".join((data.get("synonyms") or []) + (data.get("collocations") or [])
                       + (data.get("labels") or [])),
             54,
         )
-        for cap, w in (("词性", f_pos), ("释义", f_def), ("译文", f_zh),
-                       ("例句", f_ex), ("例句翻译", f_extr), ("近义 / 搭配 / 标注", f_meta)):
+        for cap, w in (("词性", f_pos), ("释义", f_def),
+                       ("例句", f_ex), ("近义 / 搭配 / 标注", f_meta)):
             col.addWidget(self._cap(cap))
             col.addWidget(self._wrap(w))
 
@@ -933,8 +960,8 @@ class EntryEditor(QDialog):
         outer.addWidget(num)
         outer.addLayout(right, 1)
         self._sense_rows.append({
-            "widget": row, "num": num, "pos": f_pos, "def": f_def, "zh": f_zh,
-            "ex": f_ex, "extr": f_extr, "meta": f_meta,
+            "widget": row, "num": num, "pos": f_pos, "def": f_def,
+            "ex": f_ex, "meta": f_meta,
             "images": sense_imgs,
         })
         self.sense_box.addWidget(row)
@@ -967,7 +994,7 @@ class EntryEditor(QDialog):
             self.dup_head = head
 
         # 词条级图片：来自左栏/侧栏那些字段
-        entry_fields = [self.f_head, self.f_pron, self.f_forms,
+        entry_fields = [self.f_head, self.f_pron,
                         self.f_phrases, self.f_etym, self.f_tags,
                         self.f_radical, self.f_strokes, self.f_trad]
         entry_imgs = []
@@ -984,12 +1011,12 @@ class EntryEditor(QDialog):
             senses.append({
                 "pos": r["pos"].text().strip(),
                 "definition": definition,
-                "definitionZh": r["zh"].toPlainText().rstrip(),
+                "definitionZh": "",
                 "images": (r.get("images") or []) + [
-                    im for f in (r["pos"], r["def"], r["zh"], r["ex"], r["extr"], r["meta"])
+                    im for f in (r["pos"], r["def"], r["ex"], r["meta"])
                     for im in (getattr(f, "_img_list", []) or [])
                 ],
-                "examples": ([{"text": example, "translation": r["extr"].toPlainText().rstrip()}]
+                "examples": ([{"text": example, "translation": ""}]
                              if example else []),
                 "synonyms": [
                     item.strip()
@@ -1020,8 +1047,7 @@ class EntryEditor(QDialog):
             "lang": "zh" if zh else "en",
             "frequency": self.f_freq.value() or None,
             "pronunciation": {"pinyin": pron} if zh else {"uk": pron},
-            "wordForms": [{"label": "词形", "value": v.strip()}
-                          for v in self.f_forms.text().replace("，", ",").split(",") if v.strip()],
+            "wordForms": (self.entry or {}).get("wordForms") or [],
             "senses": senses,
             "phrases": phrases,
             "etymology": self.f_etym.toPlainText().rstrip(),
@@ -1292,7 +1318,8 @@ class DictWindow(QMainWindow):
             return
         pos = self.browser.verticalScrollBar().value()
         backs = [x for x in self.entries if x["id"] in (self.index.inbound.get(entry["id"]) or [])]
-        self._apply_entry_html(entry, rw.entry_html(entry, self.index, backs, self._occurrences(entry)))
+        self._apply_entry_html(entry, rw.entry_html(
+            entry, self.index, backs, None, self.relations_for(entry)))
         self.browser.verticalScrollBar().setValue(pos)
 
     def _occurrences(self, entry: dict) -> list[dict]:
@@ -1342,7 +1369,20 @@ class DictWindow(QMainWindow):
                 if q not in hay:
                     continue
             out.append(e)
-        # 不排序：保持导入时的页序（PPT 本身按拼音排好了）
+        if q:
+            ql = q.lower()
+
+            def rank(e):
+                head = e["headword"].lower()
+                py = _strip_tone((e.get("pronunciation") or {}).get("pinyin", ""))
+                if head == ql:
+                    return 0          # 完全等于词条名
+                if head.startswith(ql):
+                    return 1          # 以它开头
+                if ql in py:
+                    return 2          # 拼音命中
+                return 3              # 释义里出现
+            out.sort(key=rank)
         return out
 
     def refresh_list(self):
@@ -1406,7 +1446,8 @@ class DictWindow(QMainWindow):
             self._push_history(eid)
         self.current_id = eid
         backs = [x for x in self.entries if x["id"] in (self.index.inbound.get(eid) or [])]
-        self._apply_entry_html(entry, rw.entry_html(entry, self.index, backs, self._occurrences(entry)))
+        self._apply_entry_html(entry, rw.entry_html(
+            entry, self.index, backs, None, self.relations_for(entry)))
         self.browser.verticalScrollBar().setValue(0)
         self._select_in_list(eid)
         self._update_nav()
@@ -1456,6 +1497,74 @@ class DictWindow(QMainWindow):
                 break
             self._hist_pos = nxt
         self._update_nav()
+
+    def _build_relations(self):
+        """预建三张表：按拼音、按部首、按「作为部首被用」。"""
+        self._by_sound: dict[tuple[str, int], list[dict]] = {}
+        self._by_base: dict[str, list[dict]] = {}
+        self._by_radical: dict[str, list[dict]] = {}
+        self._uses_radical: dict[str, list[dict]] = {}
+        self._in_glyph: dict[str, list[dict]] = {}
+
+        for e in self.entries:
+            for key in pinyin_keys(e):
+                self._by_sound.setdefault(key, []).append(e)
+                self._by_base.setdefault(key[0], []).append(e)
+            # 字形描述里出现的字，也算「包含」
+            for line in (e.get("senses") or [{}])[0].get("definition", "").splitlines():
+                if not line.startswith("字形"):
+                    continue
+                for ch in re.findall(r"[\u3400-\u9fff]", line):
+                    if ch != e["headword"]:
+                        self._in_glyph.setdefault(ch, []).append(e)
+                break
+
+            rad = (e.get("character") or {}).get("radical")
+            if rad:
+                self._by_radical.setdefault(rad, []).append(e)
+                if len(rad) == 1:
+                    self._uses_radical.setdefault(rad, []).append(e)
+
+    def relations_for(self, entry: dict) -> dict:
+        """同音 / 近音 / 同部首 / 含此字。"""
+        if not hasattr(self, "_by_sound"):
+            self._build_relations()
+
+        keys = pinyin_keys(entry)
+        bases = {k[0] for k in keys}
+        head = entry["headword"]
+
+        homophones, near = [], []
+        seen = {entry["id"]}
+        for key in keys:
+            for o in self._by_sound.get(key, []):
+                if o["id"] not in seen:
+                    seen.add(o["id"])
+                    homophones.append(o)
+        for base in bases:
+            for o in self._by_base.get(base, []):
+                if o["id"] not in seen:
+                    seen.add(o["id"])
+                    near.append(o)
+
+        rad = (entry.get("character") or {}).get("radical")
+        same_rad = [o for o in self._by_radical.get(rad, []) if o["id"] != entry["id"]] if rad else []
+
+        merged: list[dict] = []
+        seen_ids = {entry["id"]}
+        for src in (self._uses_radical.get(head, []), self._in_glyph.get(head, [])):
+            for o in src:
+                if o["id"] not in seen_ids:
+                    seen_ids.add(o["id"])
+                    merged.append(o)
+        contained = merged
+
+        return {
+            "homophones": homophones,
+            "near": near,
+            "same_radical": same_rad,
+            "contains": contained,
+        }
 
     def _apply_entry_html(self, entry: dict, html: str):
         """放入 HTML，并把用到的图片作为资源交给文档（不依赖 file://）。"""

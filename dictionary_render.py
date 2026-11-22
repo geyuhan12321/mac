@@ -251,15 +251,11 @@ def _sense(sense: dict, idx: int, entry: dict, index) -> str:
         body = nl(link_html(sense["definition"], entry, index))
         bits.append(f'<p style="margin:0 0 4px;color:{INK};font-size:{fs('def')};line-height:1.75;">'
                     f'{body}</p>')
-    if sense.get("definitionZh"):
-        bits.append(f'<p style="margin:0 0 7px;color:{GRAY};font-size:{fs('zh')};">'
-                    f'{nl(esc(sense["definitionZh"]))}</p>')
+    # 译文按要求不再显示
 
     for ex in sense.get("examples") or []:
         inner = f'<span style="font-size:{fs('ex')};color:#333333;">{nl(link_html(ex.get("text", ""), entry, index))}</span>'
-        if ex.get("translation"):
-            inner += (f'<p style="margin:3px 0 0;color:{MUTED};font-size:{fs('note')};">'
-                      f'{nl(esc(ex["translation"]))}</p>')
+
         if ex.get("source"):
             inner += (f'<p style="margin:2px 0 0;color:#b3b3b3;font-size:{fs('label')};">'
                       f'{nl(esc(ex["source"]))}</p>')
@@ -324,6 +320,43 @@ def _section(title: str, body: str) -> str:
             f'{title}</p>{body}')
 
 
+def _main_image(entry: dict) -> str:
+    """词条处显示的第一张图（甲骨文/字源）。"""
+    imgs = entry.get("images") or []
+    if not imgs:
+        return ""
+    url = image_src(imgs[0].get("file", ""))
+    if not url:
+        return ""
+    cap = imgs[0].get("caption") or ""
+    wide = IMAGE_WIDTH if IMAGE_WIDTH else 0
+    style = f"width:{wide}px;" if wide else ""
+    return (f'<p style="margin:8px 0 2px;text-align:center;">'
+            f'<img src="{attr(url)}" style="{style} max-width:100%;">'
+            + (f'<br><span style="color:{MUTED};font-size:{fs("label")};">{esc(cap)}</span>' if cap else "")
+            + "</p>")
+
+
+def _image_row(entry: dict) -> str:
+    """其余图片并排一行，宽度统一压到 120px。"""
+    imgs = (entry.get("images") or [])[1:]
+    if not imgs:
+        return ""
+    cells = []
+    for im in imgs:
+        url = image_src(im.get("file", ""))
+        if not url:
+            continue
+        cells.append(
+            f'<td align="center" style="padding:0 6px 0 0;">'
+            f'<img src="{attr(url)}" width="120"></td>'
+        )
+    if not cells:
+        return ""
+    return (f'<table cellspacing="0" cellpadding="0" style="margin:6px 0 2px;"><tr>'
+            f'{"".join(cells)}</tr></table>')
+
+
 def _images_block(entry: dict) -> str:
     imgs = entry.get("images") or []
     if not imgs:
@@ -346,7 +379,8 @@ def _images_block(entry: dict) -> str:
     return head + "".join(rows)
 
 
-def entry_html(entry: dict, index, backlinks: list[dict], occurrences: list[dict] | None = None) -> str:
+def entry_html(entry: dict, index, backlinks: list[dict], occurrences: list[dict] | None = None,
+               relations: dict | None = None) -> str:
     pron = entry.get("pronunciation") or {}
     homo = entry.get("homograph")
 
@@ -387,19 +421,10 @@ def entry_html(entry: dict, index, backlinks: list[dict], occurrences: list[dict
         if sub else ""
     )
 
-    top = head + subline + '<p style="margin:6px 0 0;"></p>' + rule("100%", "#cfcfcf")
+    top = (head + subline + _main_image(entry) + _image_row(entry)
+           + '<p style="margin:6px 0 0;"></p>' + rule("100%", "#cfcfcf"))
 
-    # ---- 词形
-    forms = ""
-    if entry.get("wordForms"):
-        pieces = "&nbsp;&nbsp;".join(
-            f'<span style="color:{MUTED};font-size:{fs('label')};">{esc(f.get("label"))}</span>'
-            f'<span style="color:{INK};font-size:{fs('sub')};">&nbsp;{esc(f.get("value"))}</span>'
-            for f in entry["wordForms"]
-        )
-        forms = (f'<p style="margin:9px 0 0;font-size:{fs('sub')};">'
-                 f'<span style="color:{MUTED};font-size:{fs('label')};letter-spacing:1px;">词形</span>'
-                 f'&nbsp;&nbsp;{pieces}</p>')
+    # 词形变化按要求不再显示（数据保留在 JSON 里）
 
     senses = "".join(_sense(s, i, entry, index) for i, s in enumerate(entry.get("senses") or []))
     if not senses:
@@ -436,58 +461,31 @@ def entry_html(entry: dict, index, backlinks: list[dict], occurrences: list[dict
         f'</p>'
     )
 
-    # 图片放在部首笔画之下、释义等文字之上
-    main = (top + forms + _char_bar(entry) + _images_block(entry)
-            + f'<p style="margin:0;font-size:{fs("rule")};"></p>'
-            + senses + phrases + etymology + actions)
+    # 部首笔画、译文、词形都不再显示；图片已在顶部
+    main = (top + senses + phrases + etymology + actions)
 
-    # ---- 侧栏（无边框，只有小标题 + 细线）
+    # ---- 侧栏：按部首与发音给出的关联字
+    rel = relations or {}
     side: list[str] = []
     side.append(rule("100%", HAIR))
-    if entry.get("frequency"):
-        side.append(_section("词频", f'<p style="margin:0;font-size:{fs('side')};">{freq_html(entry["frequency"])}'
-                                     f'<span style="color:{MUTED};">&nbsp;{entry["frequency"]}/5</span></p>'))
-    if entry.get("wordForms"):
-        side.append(_section("词形变化", "".join(
-            f'<p style="margin:0 0 2px;font-size:{fs('side')};">'
-            f'<span style="color:{MUTED};">{esc(f.get("label"))}</span>&nbsp;'
-            f'<span style="color:{INK};">{esc(f.get("value"))}</span></p>' for f in entry["wordForms"])))
-    if entry.get("tags"):
-        side.append(_section("分类", f'<p style="margin:0;font-size:{fs('side')};color:{GRAY};">'
-                                    f'{"、".join(esc(t) for t in entry["tags"])}</p>'))
-    if backlinks:
-        links = "、".join(
-            f'<a href="{attr(href_entry(o["id"]))}" style="color:{INK};text-decoration:none;">{esc(o["headword"])}</a>'
-            for o in backlinks[:10]
+
+    def rel_links(items: list[dict], limit: int = 24) -> str:
+        return "　".join(
+            f'<a href="{attr(href_entry(o["id"]))}" style="color:{INK};text-decoration:none;">'
+            f'{esc(o["headword"])}</a>'
+            for o in items[:limit]
         )
-        side.append(_section("被这些词条的例句用到", f'<p style="margin:0;font-size:{fs('side')};">{links}</p>'))
 
-    occs = occurrences or []
-    if occs:
-        rows = []
-        for o in occs[:5]:
-            rows.append(
-                f'<p style="margin:0 0 6px;font-size:{fs('sub')};">{link_html(o["text"], entry, index)}'
-                f'<span style="color:{MUTED};font-size:{fs('label')};">&nbsp;&nbsp;{esc(o["headword"])}</span></p>'
-            )
-        side.append(_section("出现在这些例句", "".join(rows)))
-
-    misses = index.ledger(entry)
-    if misses:
-        items = "、".join(
-            f'<a href="{attr(href_new(w))}" style="color:{MUTED};text-decoration:none;">{esc(w)}</a>'
-            for w in misses[:8]
-        )
-        more = f'<span style="color:{MUTED};font-size:{fs('label')};">　还有 {len(misses) - 8} 个</span>' if len(misses) > 8 else ""
-        side.append(_section("例句里还没收录的词", f'<p style="margin:0;font-size:{fs('side')};">{items}{more}</p>'))
-
-    # 侧栏没有实际内容时整列不渲染，正文占满
-    has_side = any(k in entry and entry[k] for k in ("frequency", "wordForms", "tags")) \
-        or bool(backlinks) or bool(occurrences)
-
-    if not has_side:
-        return f'<table width="100%" cellspacing="0" cellpadding="0"><tr>' \
-               f'<td width="100%" valign="top">{main}</td></tr></table>'
+    for title, key in (("同音", "homophones"), ("近音", "near"),
+                       ("同部首", "same_radical"), ("含此字", "contains")):
+        items = rel.get(key) or []
+        if not items:
+            continue
+        more = (f'<span style="color:{MUTED};font-size:{fs("label")};">　…共 {len(items)} 个</span>'
+                if len(items) > 24 else "")
+        side.append(_section(title,
+                             f'<p style="margin:0;font-size:{fs("side")};line-height:1.9;">'
+                             f'{rel_links(items)}{more}</p>'))
 
     aside = '<table width="100%" cellspacing="0" cellpadding="0"><tr><td>' + "".join(side) + '</td></tr></table>'
 
