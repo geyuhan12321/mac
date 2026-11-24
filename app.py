@@ -595,13 +595,13 @@ class EntryEditor(QDialog):
         self.form = QVBoxLayout(left)
         self.form.setContentsMargins(0, 0, 0, 0)
         self.form.setSpacing(0)
-        cols.addWidget(left, 71)
+        cols.addWidget(left, 62)
 
         right = QWidget()
         self.side = QVBoxLayout(right)
         self.side.setContentsMargins(0, 0, 0, 0)
         self.side.setSpacing(0)
-        cols.addWidget(right, 29)
+        cols.addWidget(right, 38)
 
         senses_val = (entry or {}).get("senses") or [{}]
         pron = (entry or {}).get("pronunciation") or {}
@@ -681,6 +681,7 @@ class EntryEditor(QDialog):
         self.extra_bar.setSpacing(6)
         btn_more = QPushButton("＋ 添加")
         btn_more.setObjectName("EditorGhost")
+        btn_more.setFixedSize(88, 88)
         btn_more.clicked.connect(self._add_extra_image)
         self.extra_bar.addWidget(btn_more)
         self.extra_bar.addStretch(1)
@@ -816,11 +817,16 @@ class EntryEditor(QDialog):
         w.imagePasted.connect(lambda w=w: self._paste_into(w))
         return w
 
-    def _area(self, placeholder: str, value: str = "", height: int = 60) -> QPlainTextEdit:
+    def _area(self, placeholder: str, value: str = "", height: int = 60,
+              lines: bool = False) -> QPlainTextEdit:
         w = PasteTextEdit(value or "")
         w.setPlaceholderText(placeholder)
         w.setObjectName("EditorArea")
-        w.setFixedHeight(height)
+        if lines:
+            fm = w.fontMetrics()
+            w.setFixedHeight(fm.lineSpacing() * height + 24)   # 按行数算高度
+        else:
+            w.setFixedHeight(height)
         w._img_list = []
         w.imagePasted.connect(lambda w=w: self._paste_into(w))
         return w
@@ -896,8 +902,8 @@ class EntryEditor(QDialog):
             pix = QPixmap(str(IMAGES_DIR / im["file"]))
             if not pix.isNull():
                 btn.setIcon(QIcon(pix))
-                btn.setIconSize(QSize(46, 46))
-            btn.setFixedSize(52, 52)
+                btn.setIconSize(QSize(82, 82))
+            btn.setFixedSize(88, 88)
             btn.clicked.connect(lambda _=False, idx=i: self._drop_image(idx))
             self.extra_bar.insertWidget(self.extra_bar.count() - 1, btn)
 
@@ -1093,16 +1099,16 @@ class EntryEditor(QDialog):
         col = QVBoxLayout()
         col.setSpacing(1)
         f_pos = self._line("动词 / VERB", data.get("pos", ""), "SenseTag")
-        f_def = self._area("柯林斯式整句释义最佳", data.get("definition", ""), 62)
+        f_def = self._area("柯林斯式整句释义最佳", data.get("definition", ""), 5, lines=True)
 
         ex = (data.get("examples") or [{}])[0]
-        f_ex = self._area("可选；写进去以后句中的词也能点", ex.get("text", ""), 54)
+        f_ex = self._area("可选；写进去以后句中的词也能点", ex.get("text", ""), 5, lines=True)
 
         f_meta = self._area(
             "每行一项，也可用 | 分隔",
             "\n".join((data.get("synonyms") or []) + (data.get("collocations") or [])
                       + (data.get("labels") or [])),
-            54,
+            5, lines=True,
         )
         for cap, w in (("词性", f_pos), ("释义", f_def),
                        ("例句", f_ex), ("近义 / 搭配 / 标注", f_meta)):
