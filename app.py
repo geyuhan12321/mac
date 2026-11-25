@@ -710,8 +710,28 @@ class EntryEditor(QDialog):
         self.form.addWidget(self._wrap(self.f_phrases))
 
         self.form.addWidget(self._section("词源"))
-        self.f_etym = self._area("如：形声字，从足包声（可换行）", (entry or {}).get("etymology", ""), 52)
+        self.f_etym = self._area("如：形声字，从足包声（可换行）",
+                                 (entry or {}).get("etymology", ""), 4, lines=True)
+        self.f_etym.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.form.addWidget(self._wrap(self.f_etym))
+
+        # ---- 关联字：整宽，四块
+        self.form.addWidget(self._section("右侧栏关联字"))
+        rel_hint = QLabel("按词条字自动识别，可改；空格 / 逗号 / 、分隔；留空表示不显示该栏")
+        rel_hint.setObjectName("EditorHint")
+        rel_hint.setWordWrap(True)
+        self.form.addWidget(rel_hint)
+
+        self.f_rel = {}
+        for key, cap in (("homophones", "同音"), ("near", "近音"),
+                         ("same_radical", "同部首"), ("contains", "含此字")):
+            self.form.addWidget(self._cap(cap))
+            box = self._area("自动识别的字，可增删", "", 4, lines=True)
+            box.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            self.f_rel[key] = box
+            box.textChanged.connect(lambda b=box: setattr(b, "_touched", True))
+            self.form.addWidget(box)
+
         self.form.addStretch(1)
 
         # ======================================================= 右栏：侧栏
@@ -746,24 +766,6 @@ class EntryEditor(QDialog):
         hint.setWordWrap(True)
         self.side.addWidget(self._section("插图"))
         self.side.addWidget(hint)
-
-        # ---- 右侧栏关联字：四块，占满右栏宽度
-        self.side.addWidget(self._section("右侧栏关联字"))
-        rel_hint = QLabel("按词条字自动识别，可改；空格 / 逗号 / 、分隔")
-        rel_hint.setObjectName("EditorHint")
-        rel_hint.setWordWrap(True)
-        self.side.addWidget(rel_hint)
-
-        self.f_rel = {}
-        for key, cap in (("homophones", "同音"), ("near", "近音"),
-                         ("same_radical", "同部首"), ("contains", "含此字")):
-            self.side.addWidget(self._cap(cap))
-            box = self._area("自动识别的字，可增删", "", 4, lines=True)
-            box.setMinimumWidth(280)
-            box.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-            self.f_rel[key] = box
-            box.textChanged.connect(lambda b=box: setattr(b, "_touched", True))
-            self.side.addWidget(box)
 
         self.side.addStretch(1)
 
