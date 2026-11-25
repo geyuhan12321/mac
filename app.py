@@ -116,20 +116,31 @@ def _writable(path: Path) -> bool:
         return False
 
 
+def _app_tag() -> str:
+    """应用标识：空白版与正式版各用各的数据目录，互不干扰。"""
+    exe = Path(sys.executable).name
+    if "DictBlank" in exe:
+        return "DictBlank"
+    if "Dict" in exe:
+        return "Dict"
+    return "Dict"
+
+
 def _user_data_dir() -> Path:
     """可写的用户数据目录，按顺序尝试几个常见位置。"""
+    tag = _app_tag()
     cands: list[Path] = []
     if sys.platform == "darwin":
-        cands.append(Path.home() / "Library" / "Application Support" / "Dict" / "data")
+        cands.append(Path.home() / "Library" / "Application Support" / tag / "data")
     if os.name == "nt":
         appdata = os.environ.get("APPDATA")
         local = os.environ.get("LOCALAPPDATA")
         if appdata:
-            cands.append(Path(appdata) / "Dict" / "data")
+            cands.append(Path(appdata) / tag / "data")
         if local:
-            cands.append(Path(local) / "Dict" / "data")
-    cands.append(Path.home() / "Dict" / "data")
-    cands.append(Path.home() / ".dict" / "data")
+            cands.append(Path(local) / tag / "data")
+    cands.append(Path.home() / tag / "data")
+    cands.append(Path.home() / f".{tag.lower()}" / "data")
 
     for c in cands:
         good = _writable(c)
