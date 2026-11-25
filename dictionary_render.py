@@ -492,7 +492,7 @@ def entry_html(entry: dict, index, backlinks: list[dict], occurrences: list[dict
         )
 
     for title, key in (("同音", "homophones"), ("近音", "near"),
-                       ("同部首", "same_radical"), ("含此字", "contains")):
+                       ("同部首", "same_radical"), ("同源字", "contains")):
         items = rel.get(key) or []
         if not items:
             continue

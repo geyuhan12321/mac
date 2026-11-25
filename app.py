@@ -736,7 +736,7 @@ class EntryEditor(QDialog):
 
         self.f_rel = {}
         for key, cap in (("homophones", "同音"), ("near", "近音"),
-                         ("same_radical", "同部首"), ("contains", "含此字")):
+                         ("same_radical", "同部首"), ("contains", "同源字")):
             self.form.addWidget(self._cap(cap))
             box = self._area("自动识别的字，可增删", "", 4, lines=True)
             box.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -988,6 +988,8 @@ class EntryEditor(QDialog):
     def _fill_relations(self, force: bool = False):
         auto = self._auto_relations()
         for key, box in self.f_rel.items():
+            if key == "contains":
+                continue          # 同源字不自动识别，留给手填
             if not force and getattr(box, "_touched", False):
                 continue
             box.blockSignals(True)
@@ -1760,14 +1762,8 @@ class DictWindow(QMainWindow):
         rad = (entry.get("character") or {}).get("radical")
         same_rad = [o for o in self._by_radical.get(rad, []) if o["id"] != entry["id"]] if rad else []
 
-        merged: list[dict] = []
-        seen_ids = {entry["id"]}
-        for src in (self._uses_radical.get(head, []), self._in_glyph.get(head, [])):
-            for o in src:
-                if o["id"] not in seen_ids:
-                    seen_ids.add(o["id"])
-                    merged.append(o)
-        contained = merged
+        # 「同源字」按要求不做自动识别，只认手动填写
+        contained: list[dict] = []
 
         return {
             "homophones": homophones,
