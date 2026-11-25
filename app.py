@@ -1075,7 +1075,8 @@ class EntryEditor(QDialog):
     def _sync_lang(self):
         zh = dm.has_cjk(self.f_head.text())
         self.lang_hint.setText("中文" if zh else "ENGLISH")
-        self.char_row_widget.setVisible(zh)
+        # 部首/笔画/繁体按要求不显示，始终保持隐藏
+        self.char_row_widget.setVisible(False)
 
     def _sync_freq(self):
         level = self.f_freq.value()
