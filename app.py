@@ -547,6 +547,8 @@ class EntryEditor(QDialog):
                  existing: set[str] | None = None):
         super().__init__(parent)
         self.entry = entry
+        if existing is None and parent is not None and hasattr(parent, "entries"):
+            existing = {e["headword"] for e in parent.entries}
         self.existing: set[str] = set(existing or ())
         self.dup_head = ""          # 若用户坚持重名保存，这里记下名字
         self._images: list[dict] = []      # 词条级图片（由字段粘贴收集）
