@@ -761,12 +761,6 @@ class EntryEditor(QDialog):
         freq_row.addStretch(1)
         self.side.addLayout(freq_row)
 
-        self.side.addWidget(self._section("词形变化"))
-        self.forms_hint = QLabel("（在左侧填写）")
-        self.forms_hint.setObjectName("EditorHint")
-        self.forms_hint.setWordWrap(True)
-        self.side.addWidget(self.forms_hint)
-
         self.side.addWidget(self._section("分类"))
         self.f_tags = self._line("动作、常用（用、或, 分隔）",
                                  "、".join((entry or {}).get("tags") or []))
@@ -812,16 +806,12 @@ class EntryEditor(QDialog):
         self._refresh_extra_images()
 
         custom = (entry or {}).get("relations") or {}
-        if custom:
-            for key, box in self.f_rel.items():
-                box.blockSignals(True)
-                box.setPlainText(" ".join(custom.get(key) or []))
-                box._touched = True
-                box.blockSignals(False)
-        else:
-            self._fill_relations(force=True)
+        for key, box in self.f_rel.items():
+            box.blockSignals(True)
+            box.setPlainText(" ".join(custom.get(key) or []))
+            box._touched = bool(custom.get(key))
+            box.blockSignals(False)
 
-        self.f_head.textChanged.connect(lambda _: self._fill_relations())
         self._sync_lang()
         self._sync_freq()
         self._sync_forms()
@@ -986,16 +976,8 @@ class EntryEditor(QDialog):
         return {k: [o["headword"] for o in rel.get(k, [])] for k in empty}
 
     def _fill_relations(self, force: bool = False):
-        auto = self._auto_relations()
-        for key, box in self.f_rel.items():
-            if key == "contains":
-                continue          # 同源字不自动识别，留给手填
-            if not force and getattr(box, "_touched", False):
-                continue
-            box.blockSignals(True)
-            box.setPlainText(" ".join(auto.get(key, [])))
-            box._touched = False
-            box.blockSignals(False)
+        """按要求不再自动识别：只在打开已有词条时回显已存的字。"""
+        return
 
     def _collect_relations(self) -> dict:
         """只保存用户动过的栏，没动过的交给自动识别。"""
@@ -1721,24 +1703,19 @@ class DictWindow(QMainWindow):
                     self._uses_radical.setdefault(rad, []).append(e)
 
     def relations_for(self, entry: dict) -> dict:
-        """同音 / 近音 / 同部首 / 含此字；词条里存了自定义就用自定义。"""
-        if not hasattr(self, "_by_sound"):
-            self._build_relations()
-
+        """右侧栏四栏：只显示人工填写的，不做任何自动识别。"""
         custom = entry.get("relations") or {}
-        if custom:
-            by_head = getattr(self, "_by_head", None)
-            if by_head is None:
-                self._by_head = {e["headword"]: e for e in self.entries}
-                by_head = self._by_head
-            auto = self._auto_relations_for(entry)
-            return {
-                k: ([by_head[n] for n in custom[k] if n in by_head]
-                    if k in custom else auto.get(k, []))
-                for k in ("homophones", "near", "same_radical", "contains")
-            }
+        if not custom:
+            return {k: [] for k in ("homophones", "near", "same_radical", "contains")}
 
-        return self._auto_relations_for(entry)
+        by_head = getattr(self, "_by_head", None)
+        if by_head is None:
+            self._by_head = {e["headword"]: e for e in self.entries}
+            by_head = self._by_head
+        return {
+            k: [by_head[n] for n in (custom.get(k) or []) if n in by_head]
+            for k in ("homophones", "near", "same_radical", "contains")
+        }
 
     def _auto_relations_for(self, entry: dict) -> dict:
         """纯自动计算：同音 / 近音 / 同部首 / 含此字。"""
