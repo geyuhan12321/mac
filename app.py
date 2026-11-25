@@ -509,6 +509,39 @@ class BulkAddDialog(QDialog):
         return out
 
 
+IMG_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff")
+
+
+def clipboard_image() -> "QImage | None":
+    """从剪贴板取图，兼容三种情况：
+    1. 位图（截图工具 / 网页图片右键复制）
+    2. 复制的是图片文件（Finder / 资源管理器里 Cmd+C）
+    3. 复制的是图片路径文本
+    """
+    cb = QApplication.clipboard()
+    img = cb.image()
+    if not img.isNull():
+        return img
+
+    md = cb.mimeData()
+    if md is not None and md.hasUrls():
+        for url in md.urls():
+            if not url.isLocalFile():
+                continue
+            path = url.toLocalFile()
+            if path.lower().endswith(IMG_EXTS) and os.path.exists(path):
+                im = QImage(path)
+                if not im.isNull():
+                    return im
+
+    text = (cb.text() or "").strip().strip('"')
+    if 0 < len(text) < 400 and text.lower().endswith(IMG_EXTS) and os.path.exists(text):
+        im = QImage(text)
+        if not im.isNull():
+            return im
+    return None
+
+
 class PasteLineEdit(QLineEdit):
     """普通输入框，但 Ctrl+V 粘贴的是图片时不当文本处理。"""
 
@@ -516,7 +549,7 @@ class PasteLineEdit(QLineEdit):
 
     def keyPressEvent(self, event):
         if event.matches(QKeySequence.StandardKey.Paste):
-            if not QApplication.clipboard().image().isNull():
+            if clipboard_image() is not None:
                 self.imagePasted.emit()
                 return
         super().keyPressEvent(event)
@@ -529,7 +562,7 @@ class PasteTextEdit(QPlainTextEdit):
 
     def keyPressEvent(self, event):
         if event.matches(QKeySequence.StandardKey.Paste):
-            if not QApplication.clipboard().image().isNull():
+            if clipboard_image() is not None:
                 self.imagePasted.emit()
                 return
         super().keyPressEvent(event)
@@ -811,8 +844,8 @@ class EntryEditor(QDialog):
     # ---------------------------------------------------------------- 粘贴图片
     def _paste_into(self, field):
         """输入框里粘贴图片：存盘，并在该框下方摆缩略图。"""
-        img = QApplication.clipboard().image()
-        if img.isNull():
+        img = clipboard_image()
+        if img is None:
             return
         name = self._save_pixmap(QPixmap.fromImage(img))
         if not name:
