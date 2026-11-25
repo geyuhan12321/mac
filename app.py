@@ -40,39 +40,6 @@ def _strip_tone(text: str) -> str:
     return (text or "").translate(_TONE_MAP).lower()
 
 
-_TONE_INDEX = {ch: i for i, ch in enumerate("āáǎà")}
-_TONE_MAP_ALL = {
-    "ā": ("a", 1), "á": ("a", 2), "ǎ": ("a", 3), "à": ("a", 4),
-    "ē": ("e", 1), "é": ("e", 2), "ě": ("e", 3), "è": ("e", 4),
-    "ī": ("i", 1), "í": ("i", 2), "ǐ": ("i", 3), "ì": ("i", 4),
-    "ō": ("o", 1), "ó": ("o", 2), "ǒ": ("o", 3), "ò": ("o", 4),
-    "ū": ("u", 1), "ú": ("u", 2), "ǔ": ("u", 3), "ù": ("u", 4),
-    "ǖ": ("v", 1), "ǘ": ("v", 2), "ǚ": ("v", 3), "ǜ": ("v", 4),
-    "ü": ("v", 0), "ń": ("n", 2), "ň": ("n", 3), "ḿ": ("m", 2),
-}
-
-
-def pinyin_keys(entry: dict) -> set[tuple[str, int]]:
-    """把 "ā / á" 拆成 {("a",1),("a",2)}，声调为 0 表示轻声。"""
-    raw = (entry.get("pronunciation") or {}).get("pinyin", "") or ""
-    out: set[tuple[str, int]] = set()
-    for piece in raw.replace(",", " ").split():
-        if piece in ("/", "、", "|"):
-            continue
-        base_chars = []
-        tone = 0
-        for ch in piece.strip().strip("/"):
-            if ch in _TONE_MAP_ALL:
-                b, t = _TONE_MAP_ALL[ch]
-                base_chars.append(b)
-                tone = t
-            elif ch.isalpha():
-                base_chars.append(ch.lower())
-        if base_chars:
-            out.add(("".join(base_chars), tone))
-    return out
-
-
 def dm_factor(delta: float) -> float:
     """把增量夹到 -4 ~ +10 之间，并按 0.5 对齐。"""
     d = max(-4.0, min(10.0, float(delta)))
@@ -952,29 +919,6 @@ class EntryEditor(QDialog):
         self._refresh_extra_images()
 
     # ---------------------------------------------------------------- 关联字
-    def _auto_relations(self) -> dict:
-        """按当前词条名，让主窗口算一遍同音/近音/同部首/含此字。"""
-        head = self.f_head.text().strip()
-        parent = self.parent()
-        empty = {k: [] for k in ("homophones", "near", "same_radical", "contains")}
-        if not head or not hasattr(parent, "relations_for"):
-            return empty
-        # 新词条还没拼音部首，用词库里同名字的条目做参考
-        base = None
-        for e in getattr(parent, "entries", []):
-            if e.get("headword") == head:
-                base = dict(e)
-                break
-        probe = base or dict(self.entry or {})
-        probe["headword"] = head
-        probe["id"] = probe.get("id") or f"probe-{head}"
-        probe.pop("relations", None)
-        try:
-            rel = parent.relations_for(probe)
-        except Exception:
-            return empty
-        return {k: [o["headword"] for o in rel.get(k, [])] for k in empty}
-
     def _fill_relations(self, force: bool = False):
         """按要求不再自动识别：只在打开已有词条时回显已存的字。"""
         return
@@ -1676,78 +1620,17 @@ class DictWindow(QMainWindow):
             self._hist_pos = nxt
         self._update_nav()
 
-    def _build_relations(self):
-        """预建三张表：按拼音、按部首、按「作为部首被用」。"""
-        self._by_sound: dict[tuple[str, int], list[dict]] = {}
-        self._by_base: dict[str, list[dict]] = {}
-        self._by_radical: dict[str, list[dict]] = {}
-        self._uses_radical: dict[str, list[dict]] = {}
-        self._in_glyph: dict[str, list[dict]] = {}
-
-        for e in self.entries:
-            for key in pinyin_keys(e):
-                self._by_sound.setdefault(key, []).append(e)
-                self._by_base.setdefault(key[0], []).append(e)
-            # 字形描述里出现的字，也算「包含」
-            for line in (e.get("senses") or [{}])[0].get("definition", "").splitlines():
-                if not line.startswith("字形"):
-                    continue
-                for ch in re.findall(r"[\u3400-\u9fff]", line):
-                    if ch != e["headword"]:
-                        self._in_glyph.setdefault(ch, []).append(e)
-                break
-
-            rad = (e.get("character") or {}).get("radical")
-            if rad:
-                self._by_radical.setdefault(rad, []).append(e)
-                if len(rad) == 1:
-                    self._uses_radical.setdefault(rad, []).append(e)
-
     def relations_for(self, entry: dict) -> dict:
-        """右侧栏四栏：只显示人工填写的，不做任何自动识别。"""
+        """右侧栏四栏：完全按人工填写的内容显示，不做任何识别。"""
+        keys = ("homophones", "near", "same_radical", "contains")
         custom = entry.get("relations") or {}
         if not custom:
-            return {k: [] for k in ("homophones", "near", "same_radical", "contains")}
+            return {k: [] for k in keys}
 
-        by_head = getattr(self, "_by_head", None)
-        if by_head is None:
-            self._by_head = {e["headword"]: e for e in self.entries}
-            by_head = self._by_head
+        by_head = {e["headword"]: e for e in self.entries}
         return {
             k: [by_head[n] for n in (custom.get(k) or []) if n in by_head]
-            for k in ("homophones", "near", "same_radical", "contains")
-        }
-
-    def _auto_relations_for(self, entry: dict) -> dict:
-        """纯自动计算：同音 / 近音 / 同部首 / 含此字。"""
-        keys = pinyin_keys(entry)
-        bases = {k[0] for k in keys}
-        head = entry["headword"]
-
-        homophones, near = [], []
-        seen = {entry["id"]}
-        for key in keys:
-            for o in self._by_sound.get(key, []):
-                if o["id"] not in seen:
-                    seen.add(o["id"])
-                    homophones.append(o)
-        for base in bases:
-            for o in self._by_base.get(base, []):
-                if o["id"] not in seen:
-                    seen.add(o["id"])
-                    near.append(o)
-
-        rad = (entry.get("character") or {}).get("radical")
-        same_rad = [o for o in self._by_radical.get(rad, []) if o["id"] != entry["id"]] if rad else []
-
-        # 「同源字」按要求不做自动识别，只认手动填写
-        contained: list[dict] = []
-
-        return {
-            "homophones": homophones,
-            "near": near,
-            "same_radical": same_rad,
-            "contains": contained,
+            for k in keys
         }
 
     def _apply_entry_html(self, entry: dict, html: str):
