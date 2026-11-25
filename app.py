@@ -18,8 +18,8 @@ from PySide6.QtWidgets import (
     QApplication, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
     QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
     QInputDialog, QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QPushButton, QScrollArea,
-    QSpinBox, QSplitter, QStyledItemDelegate, QStyle, QTextBrowser, QToolButton,
-    QVBoxLayout, QWidget,
+    QSizePolicy, QSpinBox, QSplitter, QStyledItemDelegate, QStyle, QTextBrowser,
+    QToolButton, QVBoxLayout, QWidget,
 )
 
 import dictionary_model as dm
@@ -709,21 +709,6 @@ class EntryEditor(QDialog):
                                              for x in (entry or {}).get("phrases") or []))
         self.form.addWidget(self._wrap(self.f_phrases))
 
-        self.form.addWidget(self._section("右侧栏关联字"))
-        hint = QLabel("按词条字自动识别，可改：用空格、逗号或、分隔；留空表示不显示该栏")
-        hint.setObjectName("EditorHint")
-        hint.setWordWrap(True)
-        self.form.addWidget(hint)
-
-        self.f_rel = {}
-        for key, cap in (("homophones", "同音"), ("near", "近音"),
-                         ("same_radical", "同部首"), ("contains", "含此字")):
-            self.form.addWidget(self._cap(cap))
-            box = self._area("自动识别的字，可增删", "", 40)
-            self.f_rel[key] = box
-            box.textChanged.connect(lambda b=box: setattr(b, "_touched", True))
-            self.form.addWidget(box)
-
         self.form.addWidget(self._section("词源"))
         self.f_etym = self._area("如：形声字，从足包声（可换行）", (entry or {}).get("etymology", ""), 52)
         self.form.addWidget(self._wrap(self.f_etym))
@@ -761,6 +746,25 @@ class EntryEditor(QDialog):
         hint.setWordWrap(True)
         self.side.addWidget(self._section("插图"))
         self.side.addWidget(hint)
+
+        # ---- 右侧栏关联字：四块，占满右栏宽度
+        self.side.addWidget(self._section("右侧栏关联字"))
+        rel_hint = QLabel("按词条字自动识别，可改；空格 / 逗号 / 、分隔")
+        rel_hint.setObjectName("EditorHint")
+        rel_hint.setWordWrap(True)
+        self.side.addWidget(rel_hint)
+
+        self.f_rel = {}
+        for key, cap in (("homophones", "同音"), ("near", "近音"),
+                         ("same_radical", "同部首"), ("contains", "含此字")):
+            self.side.addWidget(self._cap(cap))
+            box = self._area("自动识别的字，可增删", "", 4, lines=True)
+            box.setMinimumWidth(280)
+            box.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            self.f_rel[key] = box
+            box.textChanged.connect(lambda b=box: setattr(b, "_touched", True))
+            self.side.addWidget(box)
+
         self.side.addStretch(1)
 
         scroll.setWidget(page)

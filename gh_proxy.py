@@ -12,9 +12,9 @@ import threading
 
 # 被污染域名 → 真实 IP
 OVERRIDES = {
-    "github.com": "140.82.112.3",
-    "www.github.com": "140.82.112.3",
-    "codeload.github.com": "140.82.112.3",
+    "github.com": "140.82.116.3",
+    "www.github.com": "140.82.116.3",
+    "codeload.github.com": "140.82.116.3",
     "api.github.com": "20.205.243.168",
     "raw.githubusercontent.com": "185.199.108.133",
     "objects.githubusercontent.com": "185.199.108.133",
