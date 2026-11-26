@@ -645,15 +645,22 @@ class MainImageButton(QToolButton):
     """主图按钮：左键选/换图，右键可删除。"""
 
     def contextMenuEvent(self, event):
+        has_img = bool(self.icon().pixmap(8, 8).size().width())
         menu = QMenu(self)
+        copy_act = menu.addAction("复制这张图片")
+        copy_act.setEnabled(has_img)
+        menu.addSeparator()
         replace = menu.addAction("更换图片")
         delete = menu.addAction("删除这张主图")
-        delete.setEnabled(bool(self.icon().pixmap(8, 8).size().width()))
+        delete.setEnabled(has_img)
         chosen = menu.exec(event.globalPos())
-        if chosen is replace:
+        win = self.window()
+        if chosen is copy_act:
+            if hasattr(win, "_copy_editor_image"):
+                win._copy_editor_image(0)
+        elif chosen is replace:
             self.click()
         elif chosen is delete:
-            win = self.window()
             if hasattr(win, "_drop_main_image"):
                 win._drop_main_image()
 
@@ -977,7 +984,7 @@ class EntryEditor(QDialog):
             btn = QToolButton()
             btn.setObjectName("Thumb")
             btn.setToolTip("点击删除这张图")
-            pix = QPixmap(str(IMAGES_DIR / im["file"]))
+            pix = QPixmap(str(rw.image_path(im["file"]) or ""))
             if not pix.isNull():
                 btn.setIcon(QIcon(pix))
                 btn.setIconSize(QSize(38, 38))
@@ -1000,7 +1007,7 @@ class EntryEditor(QDialog):
         imgs = self._images
         btn = self.btn_main_img
         if imgs:
-            pix = QPixmap(str(IMAGES_DIR / imgs[0]["file"]))
+            pix = QPixmap(str(rw.image_path(imgs[0]["file"]) or ""))
             if not pix.isNull():
                 btn.setIcon(QIcon(pix))
                 btn.setIconSize(QSize(52, 52))
@@ -1019,13 +1026,42 @@ class EntryEditor(QDialog):
             btn = QToolButton()
             btn.setObjectName("Thumb")
             btn.setToolTip("点击删除这张图")
-            pix = QPixmap(str(IMAGES_DIR / im["file"]))
+            pix = QPixmap(str(rw.image_path(im["file"]) or ""))
             if not pix.isNull():
                 btn.setIcon(QIcon(pix))
                 btn.setIconSize(QSize(82, 82))
             btn.setFixedSize(88, 88)
+            btn.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            btn.customContextMenuRequested.connect(
+                lambda pos, idx=i, b=btn: self._thumb_menu(idx, b))
             btn.clicked.connect(lambda _=False, idx=i: self._drop_image(idx))
             self.extra_bar.insertWidget(self.extra_bar.count() - 1, btn)
+
+    def _thumb_menu(self, idx: int, btn):
+        """缩略图右键：复制 / 删除。"""
+        menu = QMenu(btn)
+        copy_act = menu.addAction("复制这张图片")
+        menu.addSeparator()
+        del_act = menu.addAction("删除这张图片")
+        chosen = menu.exec(btn.mapToGlobal(btn.rect().center()))
+        if chosen is copy_act:
+            self._copy_editor_image(idx)
+        elif chosen is del_act:
+            self._drop_image(idx)
+
+    def _copy_editor_image(self, idx: int) -> bool:
+        """把编辑器里的第 idx 张图放入剪贴板。"""
+        if not (0 <= idx < len(self._images)):
+            return False
+        path = rw.image_path(self._images[idx]["file"])
+        img = QImage(str(path))
+        if img.isNull():
+            return False
+        QApplication.clipboard().setImage(img)
+        win = self.window()
+        if hasattr(win, "statusBar"):
+            win.statusBar().showMessage("已复制图片", 2500)
+        return True
 
     def _drop_image(self, idx: int):
         if 0 <= idx < len(self._images):
