@@ -707,7 +707,8 @@ class EntryEditor(QDialog):
             existing = {e["headword"] for e in parent.entries}
         self.existing: set[str] = set(existing or ())
         self.dup_head = ""          # 若用户坚持重名保存，这里记下名字
-        self._images: list[dict] = []      # 词条级图片（由字段粘贴收集）
+        self._main_image: dict | None = None   # 甲骨文 / 主图
+        self._extras: list[dict] = []          # 其它图片
         self._sense_rows: list[dict] = []
 
         self.setWindowTitle("编辑词条" if entry else "新建词条")
@@ -913,8 +914,9 @@ class EntryEditor(QDialog):
         if not senses_val:
             self._add_sense({})
 
-        if entry:
-            self._images.extend(dict(x) for x in (entry.get("images") or []))
+        _imgs = [dict(x) for x in ((entry or {}).get("images") or [])]
+        self._main_image = _imgs[0] if _imgs else None
+        self._extras = _imgs[1:]
         self._refresh_main_image()
         self._refresh_extra_images()
 
@@ -969,15 +971,10 @@ class EntryEditor(QDialog):
             return False
 
         if field is not None and field is getattr(self, "f_head", None):
-            # 粘在词条名这一行：作为甲骨文/主图
-            if self._images:
-                self._images[0] = {"file": name, "caption": ""}
-            else:
-                self._images.insert(0, {"file": name, "caption": ""})
+            self._main_image = {"file": name, "caption": ""}
             self._refresh_main_image()
-            self._refresh_extra_images()
         else:
-            self._images.append({"file": name, "caption": ""})
+            self._extras.append({"file": name, "caption": ""})
             self._refresh_extra_images()
         return True
 
@@ -1009,15 +1006,18 @@ class EntryEditor(QDialog):
             self._refresh_field_thumbs(field)
 
     # ---------------------------------------------------------------- 图片（主图 / 其余）
-    def _entry_images(self) -> list[dict]:
-        """主图在前、其余在后；统一存在 self._images。"""
-        return self._images
+    def _all_images(self) -> list[dict]:
+        """主图在前，其余在后。"""
+        imgs = []
+        if self._main_image:
+            imgs.append(self._main_image)
+        imgs.extend(self._extras)
+        return imgs
 
     def _refresh_main_image(self):
-        imgs = self._images
         btn = self.btn_main_img
-        if imgs:
-            pix = QPixmap(str(rw.image_path(imgs[0]["file"]) or ""))
+        if self._main_image:
+            pix = QPixmap(str(rw.image_path(self._main_image["file"]) or ""))
             if not pix.isNull():
                 btn.setIcon(QIcon(pix))
                 btn.setIconSize(QSize(52, 52))
@@ -1032,10 +1032,10 @@ class EntryEditor(QDialog):
             w = it.widget()
             if w:
                 w.deleteLater()
-        for i, im in enumerate(self._images[1:], 1):
+        for i, im in enumerate(self._extras):
             btn = QToolButton()
             btn.setObjectName("Thumb")
-            btn.setToolTip("点击删除这张图")
+            btn.setToolTip("左键删除，右键更多")
             pix = QPixmap(str(rw.image_path(im["file"]) or ""))
             if not pix.isNull():
                 btn.setIcon(QIcon(pix))
@@ -1044,7 +1044,7 @@ class EntryEditor(QDialog):
             btn.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
             btn.customContextMenuRequested.connect(
                 lambda pos, idx=i, b=btn: self._thumb_menu(idx, b))
-            btn.clicked.connect(lambda _=False, idx=i: self._drop_image(idx))
+            btn.clicked.connect(lambda _=False, idx=i: self._drop_extra_image(idx))
             self.extra_bar.insertWidget(self.extra_bar.count() - 1, btn)
 
     def _thumb_menu(self, idx: int, btn):
@@ -1055,15 +1055,18 @@ class EntryEditor(QDialog):
         del_act = menu.addAction("删除这张图片")
         chosen = menu.exec(btn.mapToGlobal(btn.rect().center()))
         if chosen is copy_act:
-            self._copy_editor_image(idx)
+            self._copy_editor_image(idx + 1)      # 0 是主图
         elif chosen is del_act:
-            self._drop_image(idx)
+            self._drop_extra_image(idx)
 
     def _copy_editor_image(self, idx: int) -> bool:
-        """把编辑器里的第 idx 张图放入剪贴板。"""
-        if not (0 <= idx < len(self._images)):
+        """idx=0 主图，>=1 其余图片。"""
+        imgs = self._all_images()
+        if not (0 <= idx < len(imgs)):
             return False
-        path = rw.image_path(self._images[idx]["file"])
+        path = rw.image_path(imgs[idx]["file"])
+        if path is None:
+            return False
         img = QImage(str(path))
         if img.isNull():
             return False
@@ -1073,11 +1076,15 @@ class EntryEditor(QDialog):
             win.statusBar().showMessage("已复制图片", 2500)
         return True
 
-    def _drop_image(self, idx: int):
-        if 0 <= idx < len(self._images):
-            self._images.pop(idx)
-            self._refresh_main_image()
+    def _drop_extra_image(self, idx: int):
+        if 0 <= idx < len(self._extras):
+            self._extras.pop(idx)
             self._refresh_extra_images()
+
+    def _drop_main_image(self):
+        """只清空主图位，其余图片保持不变。"""
+        self._main_image = None
+        self._refresh_main_image()
 
     def _pick_main_image(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -1088,26 +1095,14 @@ class EntryEditor(QDialog):
         name = self._save_pixmap(QPixmap(path))
         if not name:
             return
-        if self._images:
-            self._images[0] = {"file": name, "caption": ""}
-        else:
-            self._images.insert(0, {"file": name, "caption": ""})
+        self._main_image = {"file": name, "caption": ""}
         self._refresh_main_image()
-        self._refresh_extra_images()
 
     def _paste_here(self):
         """专属粘贴框：贴图进「其他图片」，并把框清空。"""
         if self._paste_into():
             self.paste_box.clear()
             self.paste_box.setPlaceholderText("已加入，可继续粘贴")
-
-    def _drop_main_image(self):
-        """删除主图（甲骨文）；剩下的图依次前移。"""
-        if not self._images:
-            return
-        self._images.pop(0)
-        self._refresh_main_image()
-        self._refresh_extra_images()
 
     def _add_extra_image(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -1118,9 +1113,7 @@ class EntryEditor(QDialog):
         name = self._save_pixmap(QPixmap(path))
         if not name:
             return
-        self._images.append({"file": name, "caption": ""})
-        if len(self._images) == 1:
-            self._refresh_main_image()
+        self._extras.append({"file": name, "caption": ""})
         self._refresh_extra_images()
 
     # ---------------------------------------------------------------- 关联字
@@ -1347,7 +1340,7 @@ class EntryEditor(QDialog):
             self.dup_head = head
 
         # 词条级图片：主图在前，其余在后
-        entry_imgs = list(self._images)
+        entry_imgs = self._all_images()
 
         senses = []
         for r in self._sense_rows:
