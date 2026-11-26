@@ -94,6 +94,28 @@ def sound_relatives(entry: dict, entries: list[dict]) -> list[str]:
     return merged
 
 
+def radical_relatives(entry: dict, entries: list[dict]) -> list[str]:
+    """同形：偏旁部首相同的字。"""
+    rad = (entry.get("character") or {}).get("radical") or ""
+    if not rad:
+        # 新词条还没存部首，借词库里同名字的
+        same = next((e for e in entries if e["headword"] == entry.get("headword")), None)
+        rad = ((same or {}).get("character") or {}).get("radical") or ""
+    if not rad:
+        return []
+    out, seen = [], set()
+    for e in entries:
+        if e.get("id") == entry.get("id"):
+            continue
+        if ((e.get("character") or {}).get("radical") or "") != rad:
+            continue
+        ch = e["headword"]
+        if ch not in seen:
+            seen.add(ch)
+            out.append(ch)
+    return out
+
+
 def dm_factor(delta: float) -> float:
     """把增量夹到 -4 ~ +10 之间，并按 0.5 对齐。"""
     d = max(-4.0, min(10.0, float(delta)))
@@ -872,8 +894,9 @@ class EntryEditor(QDialog):
             box.setPlainText(" ".join(custom.get(key) or []))
             box._touched = bool(custom.get(key))
             box.blockSignals(False)
-        # 同音为空时，按词条自动补上（同音+近音合并）
-        if not (self.f_rel["homophones"].toPlainText().strip()):
+        # 同音 / 同形为空时自动补上
+        if (not self.f_rel["homophones"].toPlainText().strip()
+                or not self.f_rel["same_radical"].toPlainText().strip()):
             self._fill_relations(force=True)
         self.f_head.textChanged.connect(lambda _: self._fill_relations())
 
@@ -1033,29 +1056,36 @@ class EntryEditor(QDialog):
 
     # ---------------------------------------------------------------- 关联字
     def _fill_relations(self, force: bool = False):
-        """同音框：自动合并同音+近音；其余两栏保持手填。"""
-        box = self.f_rel.get("homophones")
-        if box is None:
-            return
-        if not force and getattr(box, "_touched", False):
-            return
+        """同音（含近音）、同形（同偏旁）自动填；同源保持手填。"""
         head = self.f_head.text().strip()
         parent = self.parent()
-        names: list[str] = []
-        if head and hasattr(parent, "entries"):
-            probe = dict(self.entry or {})
-            probe["headword"] = head
-            probe["id"] = probe.get("id") or f"probe-{head}"
+        if not head or not hasattr(parent, "entries"):
+            return
+
+        probe = dict(self.entry or {})
+        probe["headword"] = head
+        probe["id"] = probe.get("id") or f"probe-{head}"
+        same = next((e for e in parent.entries if e["headword"] == head), None)
+        if same:
             if head != (self.entry or {}).get("headword"):
-                # 新名字：借用词库里同名字的拼音
-                same = next((e for e in parent.entries if e["headword"] == head), None)
-                if same:
-                    probe["pronunciation"] = same.get("pronunciation")
-            names = sound_relatives(probe, parent.entries)
-        box.blockSignals(True)
-        box.setPlainText(" ".join(names))
-        box._touched = False
-        box.blockSignals(False)
+                probe["pronunciation"] = same.get("pronunciation")
+            if not (probe.get("character") or {}).get("radical"):
+                probe["character"] = dict(same.get("character") or {})
+
+        autos = {
+            "homophones": sound_relatives(probe, parent.entries),
+            "same_radical": radical_relatives(probe, parent.entries),
+        }
+        for key, names in autos.items():
+            box = self.f_rel.get(key)
+            if box is None:
+                continue
+            if not force and getattr(box, "_touched", False):
+                continue
+            box.blockSignals(True)
+            box.setPlainText(" ".join(names))
+            box._touched = False
+            box.blockSignals(False)
 
     def _collect_relations(self) -> dict:
         """只保存用户动过的栏，没动过的交给自动识别。"""
@@ -1758,11 +1788,14 @@ class DictWindow(QMainWindow):
         if not names:
             names = sound_relatives(entry, self.entries)
 
+        shape = custom.get("same_radical") or []
+        if not shape:
+            shape = radical_relatives(entry, self.entries)
+
         return {
             "homophones": [by_head[n] for n in names if n in by_head],
             "near": [],
-            "same_radical": [by_head[n] for n in (custom.get("same_radical") or [])
-                              if n in by_head],
+            "same_radical": [by_head[n] for n in shape if n in by_head],
             "contains": [by_head[n] for n in (custom.get("contains") or [])
                           if n in by_head],
         }
