@@ -40,6 +40,60 @@ def _strip_tone(text: str) -> str:
     return (text or "").translate(_TONE_MAP).lower()
 
 
+_TONE_MAP_ALL = {
+    "ā": ("a", 1), "á": ("a", 2), "ǎ": ("a", 3), "à": ("a", 4),
+    "ē": ("e", 1), "é": ("e", 2), "ě": ("e", 3), "è": ("e", 4),
+    "ī": ("i", 1), "í": ("i", 2), "ǐ": ("i", 3), "ì": ("i", 4),
+    "ō": ("o", 1), "ó": ("o", 2), "ǒ": ("o", 3), "ò": ("o", 4),
+    "ū": ("u", 1), "ú": ("u", 2), "ǔ": ("u", 3), "ù": ("u", 4),
+    "ǖ": ("v", 1), "ǘ": ("v", 2), "ǚ": ("v", 3), "ǜ": ("v", 4),
+    "ü": ("v", 0), "ń": ("n", 2), "ň": ("n", 3), "ḿ": ("m", 2),
+}
+
+
+def pinyin_keys(entry: dict) -> set[tuple[str, int]]:
+    """把 "ā / á" 拆成 {("a",1),("a",2)}。"""
+    raw = (entry.get("pronunciation") or {}).get("pinyin", "") or ""
+    out: set[tuple[str, int]] = set()
+    for piece in raw.replace(",", " ").replace("/", " ").split():
+        base, tone = [], 0
+        for ch in piece.strip():
+            if ch in _TONE_MAP_ALL:
+                b, t = _TONE_MAP_ALL[ch]
+                base.append(b)
+                tone = t
+            elif ch.isalpha():
+                base.append(ch.lower())
+        if base:
+            out.add(("".join(base), tone))
+    return out
+
+
+def sound_relatives(entry: dict, entries: list[dict]) -> list[str]:
+    """同音 + 近音合并：同音节同调算同音，同音节不同调算近音。"""
+    keys = pinyin_keys(entry)
+    if not keys:
+        return []
+    bases = {k[0] for k in keys}
+    exact, near = [], []
+    for e in entries:
+        if e.get("id") == entry.get("id"):
+            continue
+        ek = pinyin_keys(e)
+        if not ek:
+            continue
+        if ek & keys:
+            exact.append(e["headword"])
+        elif {k[0] for k in ek} & bases:
+            near.append(e["headword"])
+    seen, merged = set(), []
+    for ch in exact + near:
+        if ch not in seen:
+            seen.add(ch)
+            merged.append(ch)
+    return merged
+
+
 def dm_factor(delta: float) -> float:
     """把增量夹到 -4 ~ +10 之间，并按 0.5 对齐。"""
     d = max(-4.0, min(10.0, float(delta)))
@@ -542,6 +596,23 @@ def clipboard_image() -> "QImage | None":
     return None
 
 
+class MainImageButton(QToolButton):
+    """主图按钮：左键选/换图，右键可删除。"""
+
+    def contextMenuEvent(self, event):
+        menu = QMenu(self)
+        replace = menu.addAction("更换图片")
+        delete = menu.addAction("删除这张主图")
+        delete.setEnabled(bool(self.icon().pixmap(8, 8).size().width()))
+        chosen = menu.exec(event.globalPos())
+        if chosen is replace:
+            self.click()
+        elif chosen is delete:
+            win = self.window()
+            if hasattr(win, "_drop_main_image"):
+                win._drop_main_image()
+
+
 class PasteLineEdit(QLineEdit):
     """普通输入框，但 Ctrl+V 粘贴的是图片时不当文本处理。"""
 
@@ -640,10 +711,10 @@ class EntryEditor(QDialog):
         head_box.addWidget(self.dup_hint)
         head_row.addLayout(head_box, 1)
 
-        self.btn_main_img = QToolButton()
+        self.btn_main_img = MainImageButton()
         self.btn_main_img.setObjectName("MainImg")
         self.btn_main_img.setFixedSize(58, 58)
-        self.btn_main_img.setToolTip("点这里选甲骨文 / 主图")
+        self.btn_main_img.setToolTip("左键选/换甲骨文图，右键可删除")
         self.btn_main_img.clicked.connect(self._pick_main_image)
         head_row.addWidget(self.btn_main_img)
         head_row.addSpacing(8)
@@ -724,10 +795,11 @@ class EntryEditor(QDialog):
         self.form.addWidget(rel_hint)
 
         self.f_rel = {}
-        for key, cap in (("homophones", "同音"), ("near", "近音"),
-                         ("same_radical", "同部首"), ("contains", "同源字")):
+        for key, cap, hint in (("homophones", "同音", "已自动合并同音与近音，可增删"),
+                               ("same_radical", "同形", "同偏旁部首，可手填"),
+                               ("contains", "同源", "手动填写")):
             self.form.addWidget(self._cap(cap))
-            box = self._area("自动识别的字，可增删", "", 4, lines=True)
+            box = self._area(hint, "", 4, lines=True)
             box.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             self.f_rel[key] = box
             box.textChanged.connect(lambda b=box: setattr(b, "_touched", True))
@@ -800,6 +872,10 @@ class EntryEditor(QDialog):
             box.setPlainText(" ".join(custom.get(key) or []))
             box._touched = bool(custom.get(key))
             box.blockSignals(False)
+        # 同音为空时，按词条自动补上（同音+近音合并）
+        if not (self.f_rel["homophones"].toPlainText().strip()):
+            self._fill_relations(force=True)
+        self.f_head.textChanged.connect(lambda _: self._fill_relations())
 
         self._sync_lang()
         self._sync_freq()
@@ -933,6 +1009,14 @@ class EntryEditor(QDialog):
             self.paste_box.clear()
             self.paste_box.setPlaceholderText("已加入，可继续粘贴")
 
+    def _drop_main_image(self):
+        """删除主图（甲骨文）；剩下的图依次前移。"""
+        if not self._images:
+            return
+        self._images.pop(0)
+        self._refresh_main_image()
+        self._refresh_extra_images()
+
     def _add_extra_image(self):
         path, _ = QFileDialog.getOpenFileName(
             self, "添加图片", str(pathlib.Path.home()),
@@ -949,18 +1033,41 @@ class EntryEditor(QDialog):
 
     # ---------------------------------------------------------------- 关联字
     def _fill_relations(self, force: bool = False):
-        """按要求不再自动识别：只在打开已有词条时回显已存的字。"""
-        return
+        """同音框：自动合并同音+近音；其余两栏保持手填。"""
+        box = self.f_rel.get("homophones")
+        if box is None:
+            return
+        if not force and getattr(box, "_touched", False):
+            return
+        head = self.f_head.text().strip()
+        parent = self.parent()
+        names: list[str] = []
+        if head and hasattr(parent, "entries"):
+            probe = dict(self.entry or {})
+            probe["headword"] = head
+            probe["id"] = probe.get("id") or f"probe-{head}"
+            if head != (self.entry or {}).get("headword"):
+                # 新名字：借用词库里同名字的拼音
+                same = next((e for e in parent.entries if e["headword"] == head), None)
+                if same:
+                    probe["pronunciation"] = same.get("pronunciation")
+            names = sound_relatives(probe, parent.entries)
+        box.blockSignals(True)
+        box.setPlainText(" ".join(names))
+        box._touched = False
+        box.blockSignals(False)
 
     def _collect_relations(self) -> dict:
         """只保存用户动过的栏，没动过的交给自动识别。"""
         out = {}
         for key, box in self.f_rel.items():
-            if not getattr(box, "_touched", False):
-                continue
             text = (box.toPlainText().replace("、", " ").replace("，", " ")
                     .replace(",", " ").replace("/", " "))
-            out[key] = [x for x in text.split() if x]
+            items = [x for x in text.split() if x]
+            # 有内容就保存（同音是自动填的，也算）；空的只在动过时记录
+            if not items and not getattr(box, "_touched", False):
+                continue
+            out[key] = items
         return out
 
     def _wrap(self, field) -> QWidget:
@@ -1639,16 +1746,25 @@ class DictWindow(QMainWindow):
         self._update_nav()
 
     def relations_for(self, entry: dict) -> dict:
-        """右侧栏四栏：完全按人工填写的内容显示，不做任何识别。"""
-        keys = ("homophones", "near", "same_radical", "contains")
+        """同音（含近音）自动合并；同形、同源只看人工填写。"""
         custom = entry.get("relations") or {}
-        if not custom:
-            return {k: [] for k in keys}
+        by_head = getattr(self, "_by_head", None)
+        if by_head is None:
+            self._by_head = {e["headword"]: e for e in self.entries}
+            by_head = self._by_head
 
-        by_head = {e["headword"]: e for e in self.entries}
+        # 同音：优先用手工/已存的值，没有就自动算（同音+近音合并）
+        names = custom.get("homophones") or []
+        if not names:
+            names = sound_relatives(entry, self.entries)
+
         return {
-            k: [by_head[n] for n in (custom.get(k) or []) if n in by_head]
-            for k in keys
+            "homophones": [by_head[n] for n in names if n in by_head],
+            "near": [],
+            "same_radical": [by_head[n] for n in (custom.get("same_radical") or [])
+                              if n in by_head],
+            "contains": [by_head[n] for n in (custom.get("contains") or [])
+                          if n in by_head],
         }
 
     def _apply_entry_html(self, entry: dict, html: str):
