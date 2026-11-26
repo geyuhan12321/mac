@@ -959,16 +959,26 @@ class EntryEditor(QDialog):
 
     # ---------------------------------------------------------------- 粘贴图片
     def _paste_into(self, field=None):
-        """输入框里粘贴图片：存盘，并在该框下方摆缩略图。"""
+        """输入框粘贴图片：词条名那一行 → 甲骨文主图；其它 → 其他图片。"""
         img = clipboard_image()
         if img is None:
-            return
+            return False
         name = self._save_pixmap(QPixmap.fromImage(img))
         if not name:
             QMessageBox.warning(self, "保存失败", "图片没能写入 data/images。")
-            return
-        self._images.append({"file": name, "caption": ""})
-        self._refresh_extra_images()
+            return False
+
+        if field is not None and field is getattr(self, "f_head", None):
+            # 粘在词条名这一行：作为甲骨文/主图
+            if self._images:
+                self._images[0] = {"file": name, "caption": ""}
+            else:
+                self._images.insert(0, {"file": name, "caption": ""})
+            self._refresh_main_image()
+            self._refresh_extra_images()
+        else:
+            self._images.append({"file": name, "caption": ""})
+            self._refresh_extra_images()
         return True
 
     def _refresh_field_thumbs(self, field):
