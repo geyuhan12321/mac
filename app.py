@@ -514,13 +514,34 @@ class EntryView(QTextBrowser):
                     return str(prev.charFormat().toImageFormat().name() or "image")
         return ""
 
+    def _copy_image(self, src: str) -> bool:
+        """把正文里那张图片放回剪贴板。"""
+        from urllib.parse import unquote
+
+        fname = unquote(str(src or "").replace(rw.EMBED_SCHEME + "://", ""))
+        path = rw.image_path(fname)
+        if path is None:
+            return False
+        img = QImage(str(path))
+        if img.isNull():
+            return False
+        QApplication.clipboard().setImage(img)
+        win = self.window()
+        if hasattr(win, "statusBar"):
+            win.statusBar().showMessage("已复制图片，可直接粘贴到编辑框", 3000)
+        return True
+
     def contextMenuEvent(self, event):
         pos = event.pos()
         name = self.image_at(pos)
         menu = QMenu(self)
         if name:
-            title = menu.addAction("这张图片的大小")
+            title = menu.addAction("这张图片")
             title.setEnabled(False)
+            menu.addSeparator()
+            copy_img = menu.addAction("复制这张图片")
+            copy_img.setData("copyimg")
+            menu.addSeparator()
         else:
             title = menu.addAction("页面图片大小")
             title.setEnabled(False)
@@ -542,7 +563,9 @@ class EntryView(QTextBrowser):
         if chosen is None:
             return
         data = chosen.data()
-        if data == "copy":
+        if data == "copyimg":
+            self._copy_image(name)
+        elif data == "copy":
             self.copy()
         elif data == "all":
             self.selectAll()
