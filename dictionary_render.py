@@ -351,23 +351,24 @@ def _main_image(entry: dict) -> str:
 
 
 def _image_row(entry: dict) -> str:
-    """其余图片并排一行，宽度统一压到 120px。"""
+    """甲骨文之外的图片：放在正文末尾，每张 300px 宽。"""
     imgs = (entry.get("images") or [])[1:]
     if not imgs:
         return ""
-    cells = []
+    rows = []
     for im in imgs:
         url = image_src(im.get("file", ""))
         if not url:
             continue
-        cells.append(
-            f'<td align="center" style="padding:0 6px 0 0;">'
-            f'<img src="{attr(url)}" width="120"></td>'
-        )
-    if not cells:
+        cap = im.get("caption") or ""
+        line = (f'<p style="margin:0 0 10px;"><img src="{attr(url)}" width="300">')
+        if cap:
+            line += (f'<br><span style="color:{MUTED};font-size:{fs("label")};">'
+                     f'{esc(cap)}</span>')
+        rows.append(line + "</p>")
+    if not rows:
         return ""
-    return (f'<table cellspacing="0" cellpadding="0" style="margin:6px 0 2px;"><tr>'
-            f'{"".join(cells)}</tr></table>')
+    return _section("图片", "".join(rows))
 
 
 def _images_block(entry: dict) -> str:
@@ -436,7 +437,7 @@ def entry_html(entry: dict, index, backlinks: list[dict], occurrences: list[dict
         if sub else ""
     )
 
-    top = (head + subline + _image_row(entry)
+    top = (head + subline
            + '<p style="margin:6px 0 0;"></p>' + rule("100%", "#cfcfcf"))
 
     # 词形变化按要求不再显示（数据保留在 JSON 里）
@@ -476,31 +477,36 @@ def entry_html(entry: dict, index, backlinks: list[dict], occurrences: list[dict
         f'</p>'
     )
 
-    # 部首笔画、译文、词形都不再显示；图片已在顶部
-    main = (top + senses + phrases + etymology + actions)
+    # 部首笔画、译文、词形都不再显示
+    main = (top + senses + phrases + etymology + _image_row(entry) + actions)
 
-    # ---- 侧栏：按部首与发音给出的关联字
+    # ---- 侧栏：同音 / 同形 / 同源（全部人工填写，不截断）
     rel = relations or {}
     side: list[str] = []
-    side.append(rule("100%", HAIR))
 
-    def rel_links(items: list[dict], limit: int = 24) -> str:
-        return "　".join(
-            f'<a href="{attr(href_entry(o["id"]))}" style="color:{INK};text-decoration:none;">'
-            f'{esc(o["headword"])}</a>'
-            for o in items[:limit]
-        )
+    def rel_links(items: list[dict]) -> str:
+        seen, out = set(), []
+        for o in items:
+            if o["id"] in seen:
+                continue
+            seen.add(o["id"])
+            out.append(
+                f'<a href="{attr(href_entry(o["id"]))}" style="color:{INK};text-decoration:none;">'
+                f'{esc(o["headword"])}</a>'
+            )
+        return "　".join(out)
 
-    for title, key in (("同音", "homophones"), ("近音", "near"),
-                       ("同部首", "same_radical"), ("同源字", "contains")):
-        items = rel.get(key) or []
+    groups = (
+        ("同音", list(rel.get("homophones") or []) + list(rel.get("near") or [])),
+        ("同形", list(rel.get("same_radical") or [])),
+        ("同源", list(rel.get("contains") or [])),
+    )
+    for title, items in groups:
         if not items:
             continue
-        more = (f'<span style="color:{MUTED};font-size:{fs("label")};">　…共 {len(items)} 个</span>'
-                if len(items) > 24 else "")
         side.append(_section(title,
                              f'<p style="margin:0;font-size:{fs("side")};line-height:1.9;">'
-                             f'{rel_links(items)}{more}</p>'))
+                             f'{rel_links(items)}</p>'))
 
     aside = '<table width="100%" cellspacing="0" cellpadding="0"><tr><td>' + "".join(side) + '</td></tr></table>'
 

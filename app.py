@@ -668,27 +668,6 @@ class EntryEditor(QDialog):
 
         # 词形变化不再提供输入（数据保留在 JSON 里）
 
-        # 汉字信息（三格，与词条页同样的浅框）
-        self.char_row_widget = QWidget()
-        self.char_row_widget.setObjectName("CharBar")
-        char_row = QHBoxLayout(self.char_row_widget)
-        char_row.setContentsMargins(0, 0, 0, 0)
-        char_row.setSpacing(1)
-        self.f_radical = self._line("足", char.get("radical", ""), "CharField")
-        self.f_strokes = self._line("12", char.get("strokes", ""), "CharField")
-        self.f_trad = self._line("跑", char.get("traditional", ""), "CharField")
-        for cap, w in (("部首", self.f_radical), ("笔画", self.f_strokes), ("繁体", self.f_trad)):
-            cell = QWidget()
-            cell.setObjectName("CharCell")
-            v = QVBoxLayout(cell)
-            v.setContentsMargins(10, 6, 10, 6)
-            v.setSpacing(0)
-            v.addWidget(self._cap(cap))
-            v.addWidget(w)
-            char_row.addWidget(self._wrap(cell))
-        # 部首/笔画/繁体 不再显示（数据仍保留并原样写回）
-        self.char_row_widget.setVisible(False)
-
         # 其余图片（主图之外的）
         self.form.addWidget(self._section("其他图片"))
         self.extra_bar = QHBoxLayout()
@@ -700,6 +679,14 @@ class EntryEditor(QDialog):
         self.extra_bar.addWidget(btn_more)
         self.extra_bar.addStretch(1)
         self.form.addLayout(self.extra_bar)
+
+        # 专属粘贴框：焦点在这里按 Ctrl+V 直接贴图
+        self.paste_box = PasteTextEdit()
+        self.paste_box.setObjectName("PasteArea")
+        self.paste_box.setPlaceholderText("在这里 Ctrl+V 粘贴图片")
+        self.paste_box.setFixedHeight(56)
+        self.paste_box.imagePasted.connect(self._paste_here)
+        self.form.addWidget(self.paste_box)
 
         # 义项
         self.form.addSpacing(8)
@@ -842,7 +829,7 @@ class EntryEditor(QDialog):
         return w
 
     # ---------------------------------------------------------------- 粘贴图片
-    def _paste_into(self, field):
+    def _paste_into(self, field=None):
         """输入框里粘贴图片：存盘，并在该框下方摆缩略图。"""
         img = clipboard_image()
         if img is None:
@@ -851,8 +838,9 @@ class EntryEditor(QDialog):
         if not name:
             QMessageBox.warning(self, "保存失败", "图片没能写入 data/images。")
             return
-        field._img_list.append({"file": name, "caption": ""})
-        self._refresh_field_thumbs(field)
+        self._images.append({"file": name, "caption": ""})
+        self._refresh_extra_images()
+        return True
 
     def _refresh_field_thumbs(self, field):
         row = getattr(field, "_thumb_row", None)
@@ -938,6 +926,12 @@ class EntryEditor(QDialog):
             self._images.insert(0, {"file": name, "caption": ""})
         self._refresh_main_image()
         self._refresh_extra_images()
+
+    def _paste_here(self):
+        """专属粘贴框：贴图进「其他图片」，并把框清空。"""
+        if self._paste_into():
+            self.paste_box.clear()
+            self.paste_box.setPlaceholderText("已加入，可继续粘贴")
 
     def _add_extra_image(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -1054,8 +1048,6 @@ class EntryEditor(QDialog):
     def _sync_lang(self):
         zh = dm.has_cjk(self.f_head.text())
         self.lang_hint.setText("中文" if zh else "ENGLISH")
-        # 部首/笔画/繁体按要求不显示，始终保持隐藏
-        self.char_row_widget.setVisible(False)
 
     def _sync_freq(self):
         level = self.f_freq.value()
@@ -1148,14 +1140,8 @@ class EntryEditor(QDialog):
                 return
             self.dup_head = head
 
-        # 词条级图片：来自左栏/侧栏那些字段
-        entry_fields = [self.f_head, self.f_pron,
-                        self.f_phrases, self.f_etym, self.f_tags,
-                        self.f_radical, self.f_strokes, self.f_trad]
-        entry_imgs = []
-        for f in entry_fields:
-            entry_imgs.extend(getattr(f, "_img_list", []) or [])
-        entry_imgs.extend(self._images)
+        # 词条级图片：主图在前，其余在后
+        entry_imgs = list(self._images)
 
         senses = []
         for r in self._sense_rows:
@@ -1211,11 +1197,8 @@ class EntryEditor(QDialog):
             "tags": [t.strip() for t in self.f_tags.text().replace(",", "、").split("、") if t.strip()],
         }
         if zh:
-            raw["character"] = {
-                "radical": self.f_radical.text().strip(),
-                "strokes": self.f_strokes.text().strip(),
-                "traditional": self.f_trad.text().strip(),
-            }
+            # 部首/笔画/繁体不再编辑，原样保留
+            raw["character"] = dict((self.entry or {}).get("character") or {})
         if self.entry:
             raw["id"] = self.entry["id"]
         elif self.dup_head:
