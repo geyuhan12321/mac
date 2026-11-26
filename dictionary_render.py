@@ -477,8 +477,8 @@ def entry_html(entry: dict, index, backlinks: list[dict], occurrences: list[dict
         f'</p>'
     )
 
-    # 部首笔画、译文、词形都不再显示
-    main = (top + senses + phrases + etymology + _image_row(entry) + actions)
+    # 其他图片与编辑器里的位置一致：紧跟词条名/拼音之后、释义之前
+    main = (top + _image_row(entry) + senses + phrases + etymology + actions)
 
     # ---- 侧栏：同音 / 同形 / 同源（全部人工填写，不截断）
     rel = relations or {}
