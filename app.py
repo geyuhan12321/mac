@@ -1844,10 +1844,8 @@ class DictWindow(QMainWindow):
     def relations_for(self, entry: dict) -> dict:
         """同音（含近音）自动合并；同形、同源只看人工填写。"""
         custom = entry.get("relations") or {}
-        by_head = getattr(self, "_by_head", None)
-        if by_head is None:
-            self._by_head = {e["headword"]: e for e in self.entries}
-            by_head = self._by_head
+        # 每次实时构建：改名/新增后缓存会失效，导致关联字查不到
+        by_head = {e["headword"]: e for e in self.entries}
 
         # 同音：优先用手工/已存的值，没有就自动算（同音+近音合并）
         names = custom.get("homophones") or []
