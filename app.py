@@ -707,6 +707,7 @@ class EntryEditor(QDialog):
             existing = {e["headword"] for e in parent.entries}
         self.existing: set[str] = set(existing or ())
         self.dup_head = ""          # 若用户坚持重名保存，这里记下名字
+        self.result_entry: dict | None = None
         self._main_image: dict | None = None   # 甲骨文 / 主图
         self._extras: list[dict] = []          # 其它图片
         self._sense_rows: list[dict] = []
@@ -1364,8 +1365,13 @@ class EntryEditor(QDialog):
                 ],
             })
         if not senses:
-            QMessageBox.warning(self, "缺释义", "至少写一条释义。")
-            return
+            # 原来就没有释义（批量加字 / 待补）→ 允许保存其它字段；
+            # 原来有释义却被清空 → 拦一下，避免手滑丢内容。
+            had_def = any((sd.get("definition") or "").strip()
+                          for sd in ((self.entry or {}).get("senses") or []))
+            if had_def:
+                QMessageBox.warning(self, "缺释义", "至少写一条释义。")
+                return
 
         phrases = []
         for piece in self.f_phrases.text().split("|"):
